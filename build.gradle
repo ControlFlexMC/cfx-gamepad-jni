@@ -1,0 +1,55 @@
+plugins {
+    id 'java-library'
+}
+
+group = 'com.ifels'
+version = '1.0.0.7'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+    withSourcesJar()
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    compileOnly 'org.apache.logging.log4j:log4j-api:2.20.0'
+}
+
+jar {
+    manifest {
+        attributes(
+            'Implementation-Title': 'gamepad-jni',
+            'Implementation-Version': version,
+            'Automatic-Module-Name': 'com.ifels.gamepadjni'
+        )
+    }
+
+    // Include native libraries inside the JAR
+    from('prebuilt/sdl') {
+        include 'darwin-aarch64/*.dylib'
+        include 'darwin-x86_64/*.dylib'
+        include 'windows-x86_64/*.dll'
+        include 'windows-aarch64/*.dll'
+        include 'linux-x86_64/*.so*'
+        include 'linux-aarch64/*.so*'
+        into 'native'
+    }
+    from('prebuilt/jni') {
+        include 'darwin-aarch64/*.dylib'
+        include 'darwin-x86_64/*.dylib'
+        include 'windows-x86_64/*.dll'
+        include 'windows-aarch64/*.dll'
+        include 'linux-x86_64/*.so*'
+        include 'linux-aarch64/*.so*'
+        into 'native'
+    }
+}
+
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+}
+

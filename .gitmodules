@@ -1,0 +1,4 @@
+[submodule "third_party/SDL"]
+	path = third_party/SDL
+	url = https://github.com/ControlFlexMC/SDL.git
+	branch = dev-3.4.4
