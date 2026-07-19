@@ -1,0 +1,200 @@
+#!/bin/bash
+#
+# Create a GitHub Release for gamepad-jni
+#
+# This script:
+#   1. Builds the JAR (gradle clean jar)
+#   2. Creates a Git tag
+#   3. Creates a GitHub Release via gh CLI
+#   4. Uploads the JAR as a release asset
+#
+# Usage:
+#   chmod +x build_release.sh
+#   ./build_release.sh <version>
+#
+#   Example:
+#     ./build_release.sh 1.0.0.8
+#
+# Prerequisites:
+#   - GitHub CLI (gh) installed and authenticated (gh auth login)
+#   - Gradle available in PATH
+#   - JAVA_HOME set
+#
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "${SCRIPT_DIR}"
+
+# ─────────────────────────────────────────────
+# Parse version
+# ─────────────────────────────────────────────
+VERSION="${1:-}"
+if [ -z "${VERSION}" ]; then
+    echo "Usage: $0 <version>"
+    echo "Example: $0 1.0.0.8"
+    exit 1
+fi
+
+TAG="v${VERSION}"
+
+# ─────────────────────────────────────────────
+# Check prerequisites
+# ─────────────────────────────────────────────
+if ! command -v gh &>/dev/null; then
+    echo "❌ Error: GitHub CLI (gh) not found"
+    echo "   Install: brew install gh    (macOS)"
+    echo "   Login:   gh auth login"
+    exit 1
+fi
+
+if ! command -v gradle &>/dev/null; then
+    echo "❌ Error: gradle not found"
+    exit 1
+fi
+
+if ! gh auth status &>/dev/null; then
+    echo "❌ Error: gh not authenticated. Run: gh auth login"
+    exit 1
+fi
+
+# ─────────────────────────────────────────────
+# Confirm
+# ─────────────────────────────────────────────
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  GitHub Release: gamepad-jni ${TAG}"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "  Version:    ${VERSION}"
+echo "  Tag:        ${TAG}"
+echo "  Remote:     $(git remote get-url origin 2>/dev/null || echo 'unknown')"
+echo "  Branch:     $(git branch --show-current)"
+echo ""
+
+read -rp "Proceed? [y/N] " CONFIRM
+if [ "${CONFIRM}" != "y" ] && [ "${CONFIRM}" != "Y" ]; then
+    echo "Aborted."
+    exit 0
+fi
+
+# ─────────────────────────────────────────────
+# Build the JAR with the release version
+# ─────────────────────────────────────────────
+echo ""
+echo "Building JAR with version ${VERSION}..."
+gradle clean jar -Pversion="${VERSION}"
+
+JAR_FILE=$(ls build/libs/gamepad-jni-*.jar 2>/dev/null | head -1)
+if [ -z "${JAR_FILE}" ] || [ ! -f "${JAR_FILE}" ]; then
+    echo "❌ Error: JAR not found after build"
+    exit 1
+fi
+
+echo "✅ JAR: ${JAR_FILE}"
+echo "   Size: $(ls -lh "${JAR_FILE}" | awk '{print $5}')"
+
+# ─────────────────────────────────────────────
+# Create Git tag
+# ─────────────────────────────────────────────
+echo ""
+echo "Creating tag ${TAG}..."
+
+# Check if tag already exists
+if git rev-parse "${TAG}" >/dev/null 2>&1; then
+    echo "⚠️  Tag ${TAG} already exists locally."
+    read -rp "Delete and recreate? [y/N] " RECREATE
+    if [ "${RECREATE}" = "y" ] || [ "${RECREATE}" = "Y" ]; then
+        git tag -d "${TAG}"
+    else
+        echo "Aborted."
+        exit 0
+    fi
+fi
+
+# Create and push tag
+git tag -a "${TAG}" -m "Release ${TAG}"
+git push origin "${TAG}"
+
+echo "✅ Tag ${TAG} pushed"
+
+# ─────────────────────────────────────────────
+# Create GitHub Release
+# ─────────────────────────────────────────────
+echo ""
+echo "Creating GitHub Release ${TAG}..."
+
+# Generate release notes
+NOTES=$(cat <<EOF
+## gamepad-jni ${TAG}
+
+SDL3 Gamepad JNI wrapper for [Control Flex](https://www.curseforge.com/minecraft/mc-mods/control-flex).
+
+### Supported Platforms
+| Platform | Architectures |
+|----------|---------------|
+| macOS    | aarch64 (Apple Silicon), x86_64 (Intel) |
+| Windows  | x86_64 |
+| Linux    | x86_64, aarch64 |
+
+### JitPack
+Add the JitPack repository and dependency to use this version:
+
+**build.gradle:**
+\`\`\`gradle
+repositories {
+    maven { url 'https://jitpack.io' }
+}
+
+dependencies {
+    implementation 'com.ifels:gamepad-jni:${VERSION}'
+}
+\`\`\`
+
+Or via the GitHub coordinate:
+\`\`\`gradle
+dependencies {
+    implementation 'com.github.ControlFlexMC:cfx-gamepad-jni:${TAG}'
+}
+\`\`\`
+
+### Files
+- \`gamepad-jni-${VERSION}.jar\` — JAR with bundled native libraries for all platforms
+EOF
+)
+
+# Create release first (without asset — avoids 502 on large uploads blocking the whole thing)
+gh release create "${TAG}" \
+    --title "gamepad-jni ${TAG}" \
+    --notes "${NOTES}"
+
+echo "✅ Release ${TAG} created"
+
+# Upload JAR asset with retry (GitHub uploads occasionally return 502)
+echo ""
+echo "Uploading JAR asset..."
+UPLOAD_SUCCESS=0
+for i in 1 2 3 4 5; do
+    echo "  Attempt ${i}/5..."
+    if gh release upload "${TAG}" "${JAR_FILE}" 2>&1; then
+        UPLOAD_SUCCESS=1
+        break
+    fi
+    echo "  Upload failed, retrying in 10s..."
+    sleep 10
+done
+
+if [ "${UPLOAD_SUCCESS}" -eq 0 ]; then
+    echo ""
+    echo "⚠️  Asset upload failed after 5 attempts."
+    echo "  Retry manually: gh release upload ${TAG} ${JAR_FILE}"
+    exit 1
+fi
+
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "  ✅ Release ${TAG} published successfully!"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+echo "  JitPack will pick up this release automatically."
+echo "  Check status: https://jitpack.io/#ControlFlexMC/cfx-gamepad-jni/${TAG}"
+echo ""

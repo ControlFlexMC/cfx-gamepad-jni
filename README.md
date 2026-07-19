@@ -105,6 +105,65 @@ export CFX_LIB_PATH=/path/to/custom/natives
 
 The directory must contain the SDL3 and JNI library files for the current platform.
 
+## Using as a Dependency (JitPack)
+
+This library is published to [JitPack](https://jitpack.io) for easy consumption in other Gradle projects.
+
+### Add JitPack repository
+
+```gradle
+repositories {
+    maven { url 'https://jitpack.io' }
+}
+```
+
+### Add dependency
+
+**Using custom coordinates** (recommended):
+
+```gradle
+dependencies {
+    implementation 'com.ifels:gamepad-jni:<version>'
+}
+```
+
+**Using GitHub coordinates**:
+
+```gradle
+dependencies {
+    implementation 'com.github.ifels:cfx-gamepad-jni:<tag>'
+}
+```
+
+Replace `<version>` with a release version (e.g. `1.0.0.8`) or `<tag>` with a Git tag (e.g. `v1.0.0.8`). Check [JitPack](https://jitpack.io/#ifels/cfx-gamepad-jni) for available versions.
+
+JitPack builds the JAR from source on JDK 11. The resulting artifact includes Java classes and bundled native libraries for all supported platforms — no additional native compilation needed on the consumer side.
+
+## Creating a Release
+
+Use the release script to build, tag, and publish a GitHub Release (which JitPack picks up automatically):
+
+```bash
+chmod +x publish_release.sh
+./publish_release.sh 1.0.0.8
+```
+
+On Windows:
+
+```cmd
+publish_release.bat 1.0.0.8
+```
+
+This script:
+
+1. Builds the JAR with the specified version (`gradle clean jar -Pversion=1.0.0.8`)
+2. Creates and pushes a Git tag (`v1.0.0.8`)
+3. Creates a GitHub Release via `gh` CLI
+4. Uploads the JAR as a release asset
+5. JitPack automatically picks up the release and publishes the Maven artifact
+
+**Prerequisites:** [GitHub CLI (`gh`)](https://cli.github.com/) installed and authenticated (`gh auth login`).
+
 ## Project Structure
 
 ```
@@ -128,8 +187,12 @@ cfx-gamepad-jni/
 ├── third_party/SDL/                # SDL3 source (git submodule)
 ├── CMakeLists.txt                  # CMake build for the JNI native library
 ├── build.gradle                    # Gradle build for the Java JAR
+├── settings.gradle                 # Gradle project settings
 ├── build_jar.sh                    # Script to package the JAR
-└── build_jar.bat                   # Windows batch variant
+├── build_jar.bat                   # Windows batch variant
+├── publish_release.sh                # Script to create a GitHub Release
+├── publish_release.bat               # Windows batch variant
+└── jitpack.yml                     # JitPack CI configuration
 ```
 
 ## License

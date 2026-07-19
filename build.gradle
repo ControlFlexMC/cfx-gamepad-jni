@@ -1,9 +1,10 @@
 plugins {
     id 'java-library'
+    id 'maven-publish'
 }
 
 group = 'com.ifels'
-version = '1.0.0.7'
+version = findProperty('version') ?: '1.0.0-SNAPSHOT'
 
 java {
     sourceCompatibility = JavaVersion.VERSION_1_8
@@ -23,7 +24,7 @@ jar {
     manifest {
         attributes(
             'Implementation-Title': 'gamepad-jni',
-            'Implementation-Version': version,
+            'Implementation-Version': archiveVersion,
             'Automatic-Module-Name': 'com.ifels.gamepadjni'
         )
     }
@@ -46,6 +47,43 @@ jar {
         include 'linux-x86_64/*.so*'
         include 'linux-aarch64/*.so*'
         into 'native'
+    }
+}
+
+// ─────────────────────────────────────────────
+// Maven Publishing (for JitPack / local Maven repo)
+// ─────────────────────────────────────────────
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            from components.java
+
+            pom {
+                name = 'gamepad-jni'
+                description = 'A lightweight Java JNI wrapper exposing the SDL3 Gamepad API for the Control Flex Minecraft mod'
+                url = 'https://github.com/ifels/cfx-gamepad-jni'
+
+                licenses {
+                    license {
+                        name = 'MIT License'
+                        url = 'https://github.com/ifels/cfx-gamepad-jni/blob/main/LICENSE'
+                    }
+                }
+
+                developers {
+                    developer {
+                        id = 'ifels'
+                        name = 'ifels'
+                    }
+                }
+
+                scm {
+                    connection = 'scm:git:git://github.com/ifels/cfx-gamepad-jni.git'
+                    developerConnection = 'scm:git:ssh://github.com/ifels/cfx-gamepad-jni.git'
+                    url = 'https://github.com/ifels/cfx-gamepad-jni'
+                }
+            }
+        }
     }
 }
 

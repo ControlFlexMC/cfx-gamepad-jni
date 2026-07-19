@@ -1,0 +1,20 @@
+# jitpack.yml — JitPack build configuration for gamepad-jni
+#
+# JitPack builds on Linux x86_64. Native libraries for all platforms
+# are already prebuilt and committed in prebuilt/, so no native
+# compilation step is needed during the JitPack build.
+
+jdk:
+  - openjdk11
+
+# Use the standard Gradle build + publish to local Maven repo.
+# JitPack automatically runs:
+#   1. ./gradlew build
+#   2. ./gradlew publishToMavenLocal
+#
+# The resulting artifact includes:
+#   - Java classes (com.ifels.gamepadjni)
+#   - Prebuilt native libraries for all platforms (bundled in JAR under native/)
+#
+# NOTE: To publish a new version on JitPack, create a GitHub Release
+#       (or push a Git tag). JitPack will pick it up automatically.
