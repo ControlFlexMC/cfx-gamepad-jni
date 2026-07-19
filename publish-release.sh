@@ -2,15 +2,15 @@
 #
 # Create a GitHub Release for cfx-gamepad-jni
 #
-# The release version is read from gradle.properties.
+# The version argument must exactly match 'version=' in gradle.properties.
 # Edit gradle.properties to bump the version before running:
-#   version=0.8.7
+#   version=0.8.8
 #
 # Local dev builds (build-snapshot.sh) automatically append -SNAPSHOT.
 # Releases use the bare version from gradle.properties.
 #
 # This script:
-#   1. Reads version from gradle.properties
+#   1. Validates version argument matches gradle.properties
 #   2. Commits the version bump + pushes
 #   3. Builds the JAR (gradle clean jar)
 #   4. Creates a Git tag
@@ -19,7 +19,13 @@
 #
 # Usage:
 #   chmod +x publish-release.sh
-#   ./publish-release.sh
+#   ./publish-release.sh <version>
+#
+# Example:
+#   ./publish-release.sh 0.8.8
+#
+# The version argument MUST exactly match the version in gradle.properties.
+# This is a safety check to prevent publishing a mismatched release.
 #
 # Prerequisites:
 #   - GitHub CLI (gh) installed and authenticated (gh auth login)
@@ -35,6 +41,20 @@ cd "${SCRIPT_DIR}"
 PROPS_FILE="gradle.properties"
 
 # ─────────────────────────────────────────────
+# Validate version argument
+# ─────────────────────────────────────────────
+if [ $# -ne 1 ]; then
+    echo "Usage: $0 <version>"
+    echo ""
+    echo "Example: $0 0.8.8"
+    echo ""
+    echo "The version argument MUST exactly match the version in ${PROPS_FILE}."
+    exit 1
+fi
+
+INPUT_VERSION="$1"
+
+# ─────────────────────────────────────────────
 # Read version from gradle.properties
 # ─────────────────────────────────────────────
 if [ ! -f "${PROPS_FILE}" ]; then
@@ -42,12 +62,29 @@ if [ ! -f "${PROPS_FILE}" ]; then
     exit 1
 fi
 
-VERSION=$(grep -E '^version=' "${PROPS_FILE}" | cut -d'=' -f2 | xargs)
+PROPS_VERSION=$(grep -E '^version=' "${PROPS_FILE}" | cut -d'=' -f2 | xargs)
 
-if [ -z "${VERSION}" ]; then
+if [ -z "${PROPS_VERSION}" ]; then
     echo "❌ Error: 'version=' not found in ${PROPS_FILE}"
     exit 1
 fi
+
+# ─────────────────────────────────────────────
+# Verify version match
+# ─────────────────────────────────────────────
+if [ "${INPUT_VERSION}" != "${PROPS_VERSION}" ]; then
+    echo "❌ Error: Version mismatch"
+    echo ""
+    echo "  Argument:       ${INPUT_VERSION}  (from command line)"
+    echo "  gradle.properties: ${PROPS_VERSION}  (from ${PROPS_FILE})"
+    echo ""
+    echo "  These must match. Please either:"
+    echo "    - Update ${PROPS_FILE} to version=${INPUT_VERSION}"
+    echo "    - Re-run with the correct version: $0 ${PROPS_VERSION}"
+    exit 1
+fi
+
+VERSION="${INPUT_VERSION}"
 
 TAG="v${VERSION}"
 
@@ -78,7 +115,7 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "  GitHub Release: cfx-gamepad-jni ${TAG}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-echo "  Version:     ${VERSION}   (from ${PROPS_FILE})"
+echo "  Version:     ${VERSION}   (matched with ${PROPS_FILE})"
 echo "  Tag:         ${TAG}"
 echo "  Remote:      $(git remote get-url origin 2>/dev/null || echo 'unknown')"
 echo "  Branch:      $(git branch --show-current)"
