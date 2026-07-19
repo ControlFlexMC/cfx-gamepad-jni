@@ -19,7 +19,7 @@ This project produces two native libraries per platform:
 | Library              | Source                               | Description                          |
 | -------------------- | ------------------------------------ | ------------------------------------ |
 | `libgamepadjni.so` / `.dylib` / `.dll` | `src/main/c/` (built via CMake)       | JNI bridge between Java and SDL3     |
-| `libSDL3.so.0` / `libSDL3.0.dylib` / `SDL3.dll` | `third_party/SDL/` (built via `prebuilt/build-sdl3-macos.sh`) | Trimmed SDL3 — input devices only    |
+| `libSDL3.so.0` / `libSDL3.0.dylib` / `SDL3.dll` | `third_party/SDL/` (built via `prebuilt/build-sdl3.sh`) | Trimmed SDL3 — input devices only    |
 
 ### Library file names by platform
 
@@ -172,10 +172,10 @@ cfx-gamepad-jni/
 │       ├── GamepadButton.java      # Button enum (SOUTH, EAST, DPAD, etc.)
 │       └── ...                     # Supporting enums and types
 ├── prebuilt/
-│   ├── build-sdl3-macos.sh          # Script to build trimmed SDL3 (macOS)
-│   ├── build-sdl3-windows.bat       # Script to build trimmed SDL3 (Windows)
-│   ├── build-jni-macos.sh           # Script to build JNI native library (macOS)
-│   ├── build-jni-windows.bat     # Script to build JNI native library (Windows)
+│   ├── build-sdl3.sh                 # Script to build trimmed SDL3 (all platforms)
+│   ├── build-sdl3-windows.bat         # Windows launcher for build-sdl3.sh
+│   ├── build-jni.sh                 # Script to build JNI native library (all platforms)
+│   ├── build-jni-windows.bat         # Windows launcher for build-jni.sh
 │   └── sdl/                        # Prebuilt SDL3 libraries (per platform)
 │       └── jni/                    # Prebuilt JNI libraries (per platform)
 ├── third_party/SDL/                # SDL3 source (git submodule)

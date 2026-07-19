@@ -1,6 +1,6 @@
 @echo off
 REM SDL3 Build Script (Windows) - Double-click to run
-REM Automatically invokes MSYS2 MinGW64 environment to execute build-sdl3-macos.sh
+REM Automatically invokes MSYS2 MinGW64 environment to execute build-sdl3.sh
 
 setlocal
 
@@ -29,7 +29,7 @@ echo.
 
 REM Run the build script using MSYS2 MinGW64 environment
 REM MSYSTEM=MINGW64 ensures uname -s returns MINGW64_NT-* for proper OS detection
-"%MSYS2_DIR%\usr\bin\env.exe" MSYSTEM=MINGW64 PATH=/mingw64/bin:/usr/bin "%MSYS2_DIR%\usr\bin\bash.exe" -lc "cd '%SCRIPT_DIR%' && ./build-sdl3-macos.sh"
+"%MSYS2_DIR%\usr\bin\env.exe" MSYSTEM=MINGW64 PATH=/mingw64/bin:/usr/bin "%MSYS2_DIR%\usr\bin\bash.exe" -lc "cd '%SCRIPT_DIR%' && ./build-sdl3.sh"
  
  
 echo.
