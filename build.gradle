@@ -3,12 +3,16 @@ plugins {
     id 'maven-publish'
 }
 
-group = 'com.ifels'
-version = findProperty('version') ?: '1.0.0-SNAPSHOT'
+// group and version are read from gradle.properties automatically.
+// Override version at build time: gradle clean jar -Pversion=x.y.z
 
 java {
-    sourceCompatibility = JavaVersion.VERSION_1_8
-    targetCompatibility = JavaVersion.VERSION_1_8
+    sourceCompatibility = JavaVersion.toVersion(
+        findProperty('javaSourceCompatibility') ?: '1.8'
+    )
+    targetCompatibility = JavaVersion.toVersion(
+        findProperty('javaTargetCompatibility') ?: '1.8'
+    )
     withSourcesJar()
 }
 
@@ -59,14 +63,14 @@ publishing {
             from components.java
 
             pom {
-                name = 'gamepad-jni'
+                name = 'cfx-gamepad-jni'
                 description = 'A lightweight Java JNI wrapper exposing the SDL3 Gamepad API for the Control Flex Minecraft mod'
-                url = 'https://github.com/ifels/cfx-gamepad-jni'
+                url = 'https://github.com/ControlFlexMC/cfx-gamepad-jni'
 
                 licenses {
                     license {
                         name = 'MIT License'
-                        url = 'https://github.com/ifels/cfx-gamepad-jni/blob/main/LICENSE'
+                        url = 'https://github.com/ControlFlexMC/cfx-gamepad-jni/blob/main/LICENSE'
                     }
                 }
 
@@ -78,9 +82,9 @@ publishing {
                 }
 
                 scm {
-                    connection = 'scm:git:git://github.com/ifels/cfx-gamepad-jni.git'
-                    developerConnection = 'scm:git:ssh://github.com/ifels/cfx-gamepad-jni.git'
-                    url = 'https://github.com/ifels/cfx-gamepad-jni'
+                    connection = 'scm:git:git://github.com/ControlFlexMC/cfx-gamepad-jni.git'
+                    developerConnection = 'scm:git:ssh://github.com/ControlFlexMC/cfx-gamepad-jni.git'
+                    url = 'https://github.com/ControlFlexMC/cfx-gamepad-jni'
                 }
             }
         }

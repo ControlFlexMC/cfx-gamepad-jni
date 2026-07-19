@@ -1,19 +1,25 @@
 #!/bin/bash
 #
-# Create a GitHub Release for gamepad-jni
+# Create a GitHub Release for cfx-gamepad-jni
+#
+# The release version is read from gradle.properties.
+# Edit gradle.properties to bump the version before running:
+#   version=0.8.7
+#
+# Local dev builds (build-snapshot.sh) automatically append -SNAPSHOT.
+# Releases use the bare version from gradle.properties.
 #
 # This script:
-#   1. Builds the JAR (gradle clean jar)
-#   2. Creates a Git tag
-#   3. Creates a GitHub Release via gh CLI
-#   4. Uploads the JAR as a release asset
+#   1. Reads version from gradle.properties
+#   2. Commits the version bump + pushes
+#   3. Builds the JAR (gradle clean jar)
+#   4. Creates a Git tag
+#   5. Creates a GitHub Release via gh CLI
+#   6. Uploads the JAR as a release asset
 #
 # Usage:
-#   chmod +x build_release.sh
-#   ./build_release.sh <version>
-#
-#   Example:
-#     ./build_release.sh 1.0.0.8
+#   chmod +x publish-release.sh
+#   ./publish-release.sh
 #
 # Prerequisites:
 #   - GitHub CLI (gh) installed and authenticated (gh auth login)
@@ -26,13 +32,20 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "${SCRIPT_DIR}"
 
+PROPS_FILE="gradle.properties"
+
 # ─────────────────────────────────────────────
-# Parse version
+# Read version from gradle.properties
 # ─────────────────────────────────────────────
-VERSION="${1:-}"
+if [ ! -f "${PROPS_FILE}" ]; then
+    echo "❌ Error: ${PROPS_FILE} not found"
+    exit 1
+fi
+
+VERSION=$(grep -E '^version=' "${PROPS_FILE}" | cut -d'=' -f2 | xargs)
+
 if [ -z "${VERSION}" ]; then
-    echo "Usage: $0 <version>"
-    echo "Example: $0 1.0.0.8"
+    echo "❌ Error: 'version=' not found in ${PROPS_FILE}"
     exit 1
 fi
 
@@ -62,13 +75,19 @@ fi
 # Confirm
 # ─────────────────────────────────────────────
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "  GitHub Release: gamepad-jni ${TAG}"
+echo "  GitHub Release: cfx-gamepad-jni ${TAG}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-echo "  Version:    ${VERSION}"
-echo "  Tag:        ${TAG}"
-echo "  Remote:     $(git remote get-url origin 2>/dev/null || echo 'unknown')"
-echo "  Branch:     $(git branch --show-current)"
+echo "  Version:     ${VERSION}   (from ${PROPS_FILE})"
+echo "  Tag:         ${TAG}"
+echo "  Remote:      $(git remote get-url origin 2>/dev/null || echo 'unknown')"
+echo "  Branch:      $(git branch --show-current)"
+echo ""
+echo "  The script will:"
+echo "    1. Commit version bump (${PROPS_FILE})"
+echo "    2. Build ${TAG} JAR"
+echo "    3. Push commit + tag to origin"
+echo "    4. Create GitHub Release + upload JAR"
 echo ""
 
 read -rp "Proceed? [y/N] " CONFIRM
@@ -78,13 +97,32 @@ if [ "${CONFIRM}" != "y" ] && [ "${CONFIRM}" != "Y" ]; then
 fi
 
 # ─────────────────────────────────────────────
-# Build the JAR with the release version
+# Commit version bump
 # ─────────────────────────────────────────────
 echo ""
-echo "Building JAR with version ${VERSION}..."
-gradle clean jar -Pversion="${VERSION}"
+echo "Committing version bump: ${VERSION}..."
 
-JAR_FILE=$(ls build/libs/gamepad-jni-*.jar 2>/dev/null | head -1)
+if ! git diff --quiet -- "${PROPS_FILE}" 2>/dev/null; then
+    git add "${PROPS_FILE}"
+    git commit -m "Set version ${VERSION}"
+else
+    # Check if already committed
+    if git diff --cached --quiet -- "${PROPS_FILE}" 2>/dev/null && \
+       ! git log --oneline -1 --format="%s" | grep -q "Set version ${VERSION}"; then
+        echo "⚠️  ${PROPS_FILE} is unchanged. Did you edit it?"
+        echo "   Expected version=${VERSION} in ${PROPS_FILE}"
+        exit 1
+    fi
+fi
+
+# ─────────────────────────────────────────────
+# Build the JAR
+# ─────────────────────────────────────────────
+echo ""
+echo "Building JAR (version ${VERSION})..."
+gradle clean jar
+
+JAR_FILE=$(ls build/libs/cfx-gamepad-jni-*.jar 2>/dev/null | head -1)
 if [ -z "${JAR_FILE}" ] || [ ! -f "${JAR_FILE}" ]; then
     echo "❌ Error: JAR not found after build"
     exit 1
@@ -94,24 +132,30 @@ echo "✅ JAR: ${JAR_FILE}"
 echo "   Size: $(ls -lh "${JAR_FILE}" | awk '{print $5}')"
 
 # ─────────────────────────────────────────────
+# Push commit
+# ─────────────────────────────────────────────
+echo ""
+echo "Pushing commit to origin..."
+git push origin "$(git branch --show-current)"
+
+# ─────────────────────────────────────────────
 # Create Git tag
 # ─────────────────────────────────────────────
 echo ""
 echo "Creating tag ${TAG}..."
 
-# Check if tag already exists
 if git rev-parse "${TAG}" >/dev/null 2>&1; then
     echo "⚠️  Tag ${TAG} already exists locally."
     read -rp "Delete and recreate? [y/N] " RECREATE
     if [ "${RECREATE}" = "y" ] || [ "${RECREATE}" = "Y" ]; then
         git tag -d "${TAG}"
+        git push origin --delete "${TAG}" 2>/dev/null || true
     else
         echo "Aborted."
         exit 0
     fi
 fi
 
-# Create and push tag
 git tag -a "${TAG}" -m "Release ${TAG}"
 git push origin "${TAG}"
 
@@ -123,9 +167,8 @@ echo "✅ Tag ${TAG} pushed"
 echo ""
 echo "Creating GitHub Release ${TAG}..."
 
-# Generate release notes
 NOTES=$(cat <<EOF
-## gamepad-jni ${TAG}
+## cfx-gamepad-jni ${TAG}
 
 SDL3 Gamepad JNI wrapper for [Control Flex](https://www.curseforge.com/minecraft/mc-mods/control-flex).
 
@@ -136,7 +179,7 @@ SDL3 Gamepad JNI wrapper for [Control Flex](https://www.curseforge.com/minecraft
 | Windows  | x86_64 |
 | Linux    | x86_64, aarch64 |
 
-### JitPack
+### JitPack / Maven
 Add the JitPack repository and dependency to use this version:
 
 **build.gradle:**
@@ -146,7 +189,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'com.ifels:gamepad-jni:${VERSION}'
+    implementation 'com.github.ControlFlexMC:cfx-gamepad-jni:${VERSION}'
 }
 \`\`\`
 
@@ -158,13 +201,13 @@ dependencies {
 \`\`\`
 
 ### Files
-- \`gamepad-jni-${VERSION}.jar\` — JAR with bundled native libraries for all platforms
+- \`cfx-gamepad-jni-${VERSION}.jar\` — JAR with bundled native libraries for all platforms
 EOF
 )
 
-# Create release first (without asset — avoids 502 on large uploads blocking the whole thing)
+# Create release first (without asset — avoids 502 on uploads blocking the whole thing)
 gh release create "${TAG}" \
-    --title "gamepad-jni ${TAG}" \
+    --title "cfx-gamepad-jni ${TAG}" \
     --notes "${NOTES}"
 
 echo "✅ Release ${TAG} created"
@@ -195,6 +238,5 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "  ✅ Release ${TAG} published successfully!"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-echo "  JitPack will pick up this release automatically."
-echo "  Check status: https://jitpack.io/#ControlFlexMC/cfx-gamepad-jni/${TAG}"
+echo "  JitPack status: https://jitpack.io/#ControlFlexMC/cfx-gamepad-jni/${TAG}"
 echo ""

@@ -19,7 +19,7 @@ This project produces two native libraries per platform:
 | Library              | Source                               | Description                          |
 | -------------------- | ------------------------------------ | ------------------------------------ |
 | `libgamepadjni.so` / `.dylib` / `.dll` | `src/main/c/` (built via CMake)       | JNI bridge between Java and SDL3     |
-| `libSDL3.so.0` / `libSDL3.0.dylib` / `SDL3.dll` | `third_party/SDL/` (built via `prebuilt/build_sdl_input_only.sh`) | Trimmed SDL3 — input devices only    |
+| `libSDL3.so.0` / `libSDL3.0.dylib` / `SDL3.dll` | `third_party/SDL/` (built via `prebuilt/build-sdl3-macos.sh`) | Trimmed SDL3 — input devices only    |
 
 ### Library file names by platform
 
@@ -86,7 +86,7 @@ The JNI library is automatically copied to `prebuilt/jni/<platform>/` after the 
 ### Step 3: Package the JAR
 
 ```bash
-./build_jar.sh
+./build-snapshot.sh
 ```
 
 This runs `gradle clean jar`, which pulls native libraries from `prebuilt/sdl/` and `prebuilt/jni/` into the JAR under `native/<platform>/`.
@@ -123,19 +123,11 @@ repositories {
 
 ```gradle
 dependencies {
-    implementation 'com.ifels:gamepad-jni:<version>'
+    implementation 'com.github.ControlFlexMC:cfx-gamepad-jni:<version>'
 }
 ```
 
-**Using GitHub coordinates**:
-
-```gradle
-dependencies {
-    implementation 'com.github.ifels:cfx-gamepad-jni:<tag>'
-}
-```
-
-Replace `<version>` with a release version (e.g. `1.0.0.8`) or `<tag>` with a Git tag (e.g. `v1.0.0.8`). Check [JitPack](https://jitpack.io/#ifels/cfx-gamepad-jni) for available versions.
+Replace `<version>` with a release version (e.g. `0.8.7`). Check [JitPack](https://jitpack.io/#ControlFlexMC/cfx-gamepad-jni) for available versions.
 
 JitPack builds the JAR from source on JDK 11. The resulting artifact includes Java classes and bundled native libraries for all supported platforms — no additional native compilation needed on the consumer side.
 
@@ -144,23 +136,22 @@ JitPack builds the JAR from source on JDK 11. The resulting artifact includes Ja
 Use the release script to build, tag, and publish a GitHub Release (which JitPack picks up automatically):
 
 ```bash
-chmod +x publish_release.sh
-./publish_release.sh 1.0.0.8
-```
+# 1. Edit gradle.properties to set the release version
+#    version=0.8.7
 
-On Windows:
-
-```cmd
-publish_release.bat 1.0.0.8
+# 2. Run the release script (reads version from gradle.properties)
+chmod +x publish-release.sh
+./publish-release.sh
 ```
 
 This script:
 
-1. Builds the JAR with the specified version (`gradle clean jar -Pversion=1.0.0.8`)
-2. Creates and pushes a Git tag (`v1.0.0.8`)
-3. Creates a GitHub Release via `gh` CLI
-4. Uploads the JAR as a release asset
-5. JitPack automatically picks up the release and publishes the Maven artifact
+1. Commits the version bump in `gradle.properties`
+2. Builds the JAR (`gradle clean jar`)
+3. Pushes the commit + creates and pushes a Git tag (`v0.8.7`)
+4. Creates a GitHub Release via `gh` CLI
+5. Uploads the JAR as a release asset (with retry)
+6. JitPack automatically picks up the release and publishes the Maven artifact
 
 **Prerequisites:** [GitHub CLI (`gh`)](https://cli.github.com/) installed and authenticated (`gh auth login`).
 
@@ -181,17 +172,19 @@ cfx-gamepad-jni/
 │       ├── GamepadButton.java      # Button enum (SOUTH, EAST, DPAD, etc.)
 │       └── ...                     # Supporting enums and types
 ├── prebuilt/
-│   ├── build_sdl_input_only.sh     # Script to build trimmed SDL3
+│   ├── build-sdl3-macos.sh          # Script to build trimmed SDL3 (macOS)
+│   ├── build-sdl3-windows.bat       # Script to build trimmed SDL3 (Windows)
+│   ├── build-jni-macos.sh           # Script to build JNI native library (macOS)
+│   ├── build-jni-windows.bat     # Script to build JNI native library (Windows)
 │   └── sdl/                        # Prebuilt SDL3 libraries (per platform)
 │       └── jni/                    # Prebuilt JNI libraries (per platform)
 ├── third_party/SDL/                # SDL3 source (git submodule)
 ├── CMakeLists.txt                  # CMake build for the JNI native library
 ├── build.gradle                    # Gradle build for the Java JAR
 ├── settings.gradle                 # Gradle project settings
-├── build_jar.sh                    # Script to package the JAR
-├── build_jar.bat                   # Windows batch variant
-├── publish_release.sh                # Script to create a GitHub Release
-├── publish_release.bat               # Windows batch variant
+├── gradle.properties               # Project coordinates and Gradle settings
+├── build-snapshot.sh               # Local dev build (auto -SNAPSHOT suffix)
+├── publish-release.sh              # Script to create a GitHub Release
 └── jitpack.yml                     # JitPack CI configuration
 ```
 
