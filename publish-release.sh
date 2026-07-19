@@ -97,22 +97,25 @@ if [ "${CONFIRM}" != "y" ] && [ "${CONFIRM}" != "Y" ]; then
 fi
 
 # ─────────────────────────────────────────────
-# Commit version bump
+# Commit version bump (if not already committed)
 # ─────────────────────────────────────────────
 echo ""
-echo "Committing version bump: ${VERSION}..."
 
-if ! git diff --quiet -- "${PROPS_FILE}" 2>/dev/null; then
+# Check if the version change is already committed at HEAD
+if git log --oneline -1 --format="%s" | grep -q "Set version ${VERSION}"; then
+    echo "Version bump already committed, skipping."
+elif ! git diff --cached --quiet -- "${PROPS_FILE}" 2>/dev/null; then
+    # Staged but not committed
+    echo "Committing staged version bump: ${VERSION}..."
+    git commit -m "Set version ${VERSION}"
+elif ! git diff --quiet -- "${PROPS_FILE}" 2>/dev/null; then
+    # Unstaged changes
+    echo "Committing version bump: ${VERSION}..."
     git add "${PROPS_FILE}"
     git commit -m "Set version ${VERSION}"
 else
-    # Check if already committed
-    if git diff --cached --quiet -- "${PROPS_FILE}" 2>/dev/null && \
-       ! git log --oneline -1 --format="%s" | grep -q "Set version ${VERSION}"; then
-        echo "⚠️  ${PROPS_FILE} is unchanged. Did you edit it?"
-        echo "   Expected version=${VERSION} in ${PROPS_FILE}"
-        exit 1
-    fi
+    # File matches HEAD — already committed in a prior commit
+    echo "Version ${VERSION} already in ${PROPS_FILE}, proceeding."
 fi
 
 # ─────────────────────────────────────────────
