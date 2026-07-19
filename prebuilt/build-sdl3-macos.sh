@@ -1,6 +1,7 @@
 #!/bin/bash
 #
-# SDL3 trimmed build script - only retain Keyboard/Mouse/Joystick input functionality
+# SDL3 trimmed build script — joystick/gamepad input only.
+# Video, audio, rendering etc. are all disabled. No windowing backends needed.
 # Supports macOS + Windows (MSYS2 MinGW64) platforms
 #
 # Build artifacts:
@@ -68,8 +69,9 @@ SDL_CMAKE_COMMON_OPTIONS=(
     # Subsystem switches
     # ═══════════════════════════════════════
 
-    # ✅ Keep: Video (keyboard/mouse event capture depends on video subsystem's platform backend)
-    -DSDL_VIDEO=ON
+    # ❌ Disable: Video — not needed for joystick/gamepad input.
+    #            Disabling video avoids the Cocoa/X11/Wayland requirement entirely.
+    -DSDL_VIDEO=OFF
 
     # ✅ Keep: Joystick + Hidapi (joystick/gamepad functionality)
     -DSDL_JOYSTICK=ON
@@ -135,8 +137,8 @@ SDL_CMAKE_COMMON_OPTIONS=(
 # ─────────────────────────────────────────────
 if [ "$OS_NAME" = "Darwin" ]; then
     SDL_CMAKE_PLATFORM_OPTIONS=(
-        # Video backend: only keep Cocoa (macOS window system, source of keyboard/mouse events)
-        -DSDL_COCOA=ON
+        # All video backends disabled (SDL_VIDEO=OFF above)
+        -DSDL_COCOA=OFF
         -DSDL_X11=OFF
         -DSDL_WAYLAND=OFF
         -DSDL_KMSDRM=OFF
@@ -148,8 +150,7 @@ if [ "$OS_NAME" = "Darwin" ]; then
     )
 elif [[ "$OS_NAME" == MINGW* ]] || [[ "$OS_NAME" == MSYS* ]]; then
     SDL_CMAKE_PLATFORM_OPTIONS=(
-        # Video backend: Windows (source of keyboard/mouse events)
-        # Note: Windows does not need SDL_WINDOWS_VIDEO explicitly enabled; CMake handles it automatically
+        # All video backends disabled (SDL_VIDEO=OFF above)
         -DSDL_COCOA=OFF
         -DSDL_X11=OFF
         -DSDL_WAYLAND=OFF
@@ -159,8 +160,8 @@ elif [[ "$OS_NAME" == MINGW* ]] || [[ "$OS_NAME" == MSYS* ]]; then
         -DSDL_VIVANTE=OFF
         -DSDL_OFFSCREEN=OFF
         -DSDL_DUMMYVIDEO=OFF
-        # Windows-specific: DirectX (required by video backend), XInput (required by joystick)
-        -DSDL_DIRECTX=ON
+        # Windows-specific: DirectX (video), XInput (joystick — keep this one)
+        -DSDL_DIRECTX=OFF
         -DSDL_XINPUT=ON
         # WASAPI (audio, not needed)
         -DSDL_WASAPI=OFF
@@ -515,9 +516,9 @@ Build artifact locations:
   x86_64:   ${INSTALL_DIR}/darwin-x86_64/
   Headers:  ${INSTALL_DIR}/include/SDL3/
 
-Trimmed features: Audio, GPU, Render, Camera, Haptic, Power, Dialog, Tray
-                  OpenGL, Vulkan, Metal and other graphics rendering
-Retained features: Keyboard, Mouse, Joystick/Gamepad, Sensor, basic event system
+Trimmed features: Video, Audio, GPU, Render, Camera, Haptic, Power, Dialog, Tray
+                  OpenGL, Vulkan, Metal, D3D and all windowing backends
+Retained features: Joystick/Gamepad, Sensor
 All dependencies are macOS system frameworks; no extra libraries need to be installed.
 EOF
 }
@@ -541,9 +542,9 @@ Build artifact locations:
   Import lib:  ${INSTALL_DIR}/windows-x86_64/lib/   (for linking only, not needed at runtime)
   Headers:     ${INSTALL_DIR}/include/SDL3/
 
-Trimmed features: Audio, GPU, Render, Camera, Haptic, Power, Dialog, Tray
-                  OpenGL, Vulkan, D3D rendering
-Retained features: Keyboard, Mouse, Joystick/Gamepad, Sensor, basic event system
+Trimmed features: Video, Audio, GPU, Render, Camera, Haptic, Power, Dialog, Tray
+                  OpenGL, Vulkan, D3D, DirectX and all windowing backends
+Retained features: Joystick/Gamepad, Sensor, XInput
 All dependencies are Windows system libraries; no extra libraries need to be installed.
 EOF
 }

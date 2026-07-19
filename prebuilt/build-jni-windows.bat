@@ -1,6 +1,6 @@
 @echo off
 REM gamepad-jni native build script (Windows)
-REM Double-click to run - automatically invokes MSYS2 MinGW64 to execute build_native.sh
+REM Double-click to run - automatically invokes MSYS2 MinGW64 to execute build-jni-macos.sh
 REM
 REM Prerequisites:
 REM   - MSYS2 installed at C:\msys64 with mingw-w64 toolchain
@@ -56,14 +56,14 @@ set "SCRIPT_DIR=%SCRIPT_DIR:\=/%"
 echo   Working directory: %SCRIPT_DIR%
 echo.
 
-REM Write a temp script to set JAVA_HOME and run build_native.sh
+REM Write a temp script to set JAVA_HOME and run build-jni-macos.sh
 REM This avoids PSReadLine crashes and handles paths with spaces
 set "TEMP_SCRIPT=%TEMP%\gamepad_build_native_%RANDOM%.sh"
 (
 echo #!/bin/bash
 echo if [ -n "'%JAVA_HOME%'" ]; then export JAVA_HOME='%JAVA_HOME%'; fi
 echo cd '%SCRIPT_DIR%'
-echo ./build_native.sh
+echo ./build-jni-macos.sh
 ) > "%TEMP_SCRIPT%"
 
 REM Run the build script using MSYS2 MinGW64 environment
