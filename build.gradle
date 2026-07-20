@@ -40,7 +40,7 @@ jar {
         include 'darwin-aarch64/*.dylib'
         include 'darwin-x86_64/*.dylib'
         include 'linux-x86_64/*.so*'
-        //include 'linux-aarch64/*.so*'
+        include 'linux-aarch64/*.so*'
         into 'native'
     }
     from('prebuilt/jni') {
@@ -49,7 +49,7 @@ jar {
         include 'darwin-aarch64/*.dylib'
         include 'darwin-x86_64/*.dylib'
         include 'linux-x86_64/*.so*'
-        //include 'linux-aarch64/*.so*'
+        include 'linux-aarch64/*.so*'
         into 'native'
     }
 }
