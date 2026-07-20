@@ -19,7 +19,7 @@ This project produces two native libraries per platform:
 | Library              | Source                               | Description                          |
 | -------------------- | ------------------------------------ | ------------------------------------ |
 | `libgamepadjni.so` / `.dylib` / `.dll` | `src/main/c/` (built via CMake)       | JNI bridge between Java and SDL3     |
-| `libSDL3.so.0` / `libSDL3.0.dylib` / `SDL3.dll` | `third_party/SDL/` (built via `prebuilt/build-sdl3.sh`) | Trimmed SDL3 — input devices only    |
+| `libSDL3.so` / `libSDL3.0.dylib` / `SDL3.dll` | `third_party/SDL/` (built via `prebuilt/build-sdl3.sh`) | Trimmed SDL3 — input devices only    |
 
 ### Library file names by platform
 
@@ -27,7 +27,7 @@ This project produces two native libraries per platform:
 | -------- | ---------------------- | -------------------- |
 | macOS    | `libgamepadjni.dylib`  | `libSDL3.0.dylib`    |
 | Windows  | `gamepadjni.dll`       | `SDL3.dll`           |
-| Linux    | `libgamepadjni.so`     | `libSDL3.so.0`       |
+| Linux    | `libgamepadjni.so`     | `libSDL3.so`       |
 
 ## Adding Platform Support for Control Flex
 
@@ -45,10 +45,10 @@ gamepad-jni-<version>.jar
     │   ├── libSDL3.0.dylib
     │   └── libgamepadjni.dylib
     ├── linux-aarch64/
-    │   ├── libSDL3.so.0
+    │   ├── libSDL3.so
     │   └── libgamepadjni.so
     ├── linux-x86_64/
-    │   ├── libSDL3.so.0
+    │   ├── libSDL3.so
     │   └── libgamepadjni.so
     ├── windows-aarch64/
     │   ├── SDL3.dll

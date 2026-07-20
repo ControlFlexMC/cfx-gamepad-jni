@@ -226,7 +226,7 @@ final class NativeLibraryLoader {
         } else if (osName.contains("win")) {
             return "SDL3.dll";
         } else {
-            return "libSDL3.so.0";
+            return "libSDL3.so";
         }
     }
 
