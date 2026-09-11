@@ -45,3 +45,7 @@ prebuilt/**/*.lib
 .idea/
 *.iml
 out/
+
+# Android link-time SDL3 (re-downloadable, never packaged)
+prebuilt/link-only/
+prebuilt/jni/build-android/
