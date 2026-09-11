@@ -40,6 +40,13 @@ public final class GamepadJNI {
     public static native void SDL_Quit();
 
     /**
+     * Get the version of the linked SDL3.
+     *
+     * @return packed version: {@code major * 1000000 + minor * 1000 + patch}
+     */
+    public static native int SDL_GetVersion();
+
+    /**
      * Shut down specific SDL subsystems.
      *
      * <p>Prefer this over {@link #SDL_Quit()} when sharing a process-wide SDL
