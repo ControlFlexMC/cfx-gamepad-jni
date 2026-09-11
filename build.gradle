@@ -53,6 +53,11 @@ jar {
         include 'darwin-x86_64/*.dylib'
         include 'linux-x86_64/*.so*'
         include 'linux-aarch64/*.so*'
+        // Android: only our JNI bridge. libSDL3.so is provided by the launcher
+        // APK at runtime, never packaged - see spec section 6.1/6.4.
+        include 'android-arm64-v8a/*.so*'
+        include 'android-armeabi-v7a/*.so*'
+        include 'android-x86_64/*.so*'
         into 'native'
     }
 }
@@ -102,3 +107,48 @@ tasks.named('test') {
     useJUnitPlatform()
 }
 
+
+// ─────────────────────────────────────────────
+// Jar content assertions
+//
+// The contract this guards (spec sections 4 and 6.4):
+//   - all three Android libgamepadjni.so are packaged
+//   - no Android libSDL3.so is ever packaged; the launcher APK provides it
+//   - the five desktop native directories are still there
+// ─────────────────────────────────────────────
+tasks.register('verifyJarContents') {
+    dependsOn tasks.named('jar')
+    def jarProvider = tasks.named('jar').flatMap { it.archiveFile }
+    inputs.file(jarProvider)
+    doLast {
+        def entries = []
+        new java.util.zip.ZipFile(jarProvider.get().asFile).withCloseable { zip ->
+            entries = zip.entries().collect { it.name }
+        }
+        def required = [
+                'native/android-arm64-v8a/libgamepadjni.so',
+                'native/android-armeabi-v7a/libgamepadjni.so',
+                'native/android-x86_64/libgamepadjni.so',
+                'native/darwin-aarch64/libgamepadjni.dylib',
+                'native/darwin-x86_64/libgamepadjni.dylib',
+                'native/linux-x86_64/libgamepadjni.so',
+                'native/linux-aarch64/libgamepadjni.so',
+                'native/windows-x86_64/gamepadjni.dll',
+        ]
+        def missing = required.findAll { !entries.contains(it) }
+        if (missing) {
+            throw new GradleException("verifyJarContents: missing entries ${missing}")
+        }
+        def forbidden = entries.findAll {
+            it.startsWith('native/android-') && it.contains('libSDL3')
+        }
+        if (forbidden) {
+            throw new GradleException(
+                    "verifyJarContents: the Android libSDL3.so must never be packaged: ${forbidden}")
+        }
+        logger.lifecycle("verifyJarContents: OK ({} entries, {} natives checked)",
+                entries.size(), required.size())
+    }
+}
+
+tasks.named('check') { dependsOn tasks.named('verifyJarContents') }
