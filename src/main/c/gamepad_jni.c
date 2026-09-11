@@ -55,6 +55,24 @@ Java_com_ifels_gamepadjni_GamepadJNI_SDL_1Quit(JNIEnv *env, jclass cls) {
     SDL_Quit();
 }
 
+JNIEXPORT jint JNICALL
+Java_com_ifels_gamepadjni_GamepadJNI_SDL_1GetVersion(JNIEnv *env, jclass cls) {
+    (void)env; (void)cls;
+    return (jint)SDL_GetVersion();
+}
+
+JNIEXPORT void JNICALL
+Java_com_ifels_gamepadjni_GamepadJNI_SDL_1QuitSubSystem(JNIEnv *env, jclass cls, jint flags) {
+    (void)env; (void)cls;
+    SDL_QuitSubSystem((SDL_InitFlags)flags);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_ifels_gamepadjni_GamepadJNI_SDL_1WasInit(JNIEnv *env, jclass cls, jint flags) {
+    (void)env; (void)cls;
+    return (jint)SDL_WasInit((SDL_InitFlags)flags);
+}
+
 JNIEXPORT jstring JNICALL
 Java_com_ifels_gamepadjni_GamepadJNI_SDL_1GetError(JNIEnv *env, jclass cls) {
     (void)cls;

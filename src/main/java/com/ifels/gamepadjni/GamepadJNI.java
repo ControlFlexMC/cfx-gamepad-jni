@@ -39,6 +39,19 @@ public final class GamepadJNI {
     /** Shut down all SDL subsystems. */
     public static native void SDL_Quit();
 
+    /**
+     * Get the version of the linked SDL3.
+     *
+     * @return packed version: {@code major * 1000000 + minor * 1000 + patch}
+     */
+    public static native int SDL_GetVersion();
+
+    /** Shut down the given SDL subsystems (bitmask of SDL_INIT_* flags). */
+    public static native void SDL_QuitSubSystem(int flags);
+
+    /** @return bitmask of the SDL subsystems that are currently initialized. */
+    public static native int SDL_WasInit(int flags);
+
     /** Get the last SDL error string. */
     public static native String SDL_GetError();
 
