@@ -11,6 +11,7 @@ Control Flex uses this library to provide cross-platform gamepad support (Xbox, 
 | macOS     | `aarch64` (Apple Silicon), `x86_64` (Intel) |
 | Windows   | `x86_64`, `aarch64`            |
 | Linux     | `x86_64`, `aarch64`            |
+| Android   | `arm64-v8a`, `armeabi-v7a`, `x86_64` (see [Android](#android)) |
 
 ## Native Libraries
 
@@ -38,6 +39,12 @@ Control Flex loads native libraries from the JAR at runtime. To add or update a 
 ```
 gamepad-jni-<version>.jar
 └── native/
+    ├── android-arm64-v8a/          # JNI bridge only - SDL3 comes from the launcher
+    │   └── libgamepadjni.so
+    ├── android-armeabi-v7a/
+    │   └── libgamepadjni.so
+    ├── android-x86_64/
+    │   └── libgamepadjni.so
     ├── darwin-aarch64/
     │   ├── libSDL3.0.dylib
     │   └── libgamepadjni.dylib
@@ -57,6 +64,35 @@ gamepad-jni-<version>.jar
         ├── SDL3.dll
         └── gamepadjni.dll
 ```
+
+`verifyJarContents` (part of `check`) asserts these eight directories are present
+and that no Android `libSDL3.so` is ever packaged.
+
+### Android
+
+Android launchers (Amethyst, Zalith Launcher 2, FoldCraftLauncher) run Minecraft
+in a second JVM inside the same app process, and they ship `libSDL3.so` in the APK
+**together with SDL's Java glue** (`org.libsdl.app.*`), which they install into the
+ART runtime. That glue is what SDL's Android joystick driver talks to, so a copy of
+SDL3 we built ourselves could never enumerate a gamepad. We therefore:
+
+- load the launcher's SDL3 - `$POJAV_NATIVEDIR/libSDL3.so`, falling back to
+  `System.loadLibrary("SDL3")` - instead of shipping our own;
+- ship only our own `libgamepadjni.so` under `native/android-<abi>/`;
+- call `SDL_InitSubSystem` rather than `SDL_Init`, because the launchers' bytehook
+  patches that specific symbol and only then installs the glue;
+- release with `SDL_QuitSubSystem` rather than `SDL_Quit`, so we never tear down
+  SDL subsystems the launcher (or Minecraft 26.3+, which uses SDL itself) owns.
+
+**`CFX_LIB_PATH` on Android only overrides `libgamepadjni.so`.** It must not point
+at another `libSDL3.so`: loading SDL3 from a different path yields a second
+instance with no launcher glue, which can never see a gamepad.
+
+Build the Android natives with `prebuilt/build-jni-android.sh` (needs the Android
+NDK); SDL3 at link time is fetched from the official `SDL3-devel-<version>-android`
+release into `prebuilt/link-only/`, which is gitignored and never packaged. The
+resulting `.so` files are committed, because JitPack only zips what is already in
+`prebuilt/`.
 
 ### Step 1: Build the trimmed SDL3 library
 
