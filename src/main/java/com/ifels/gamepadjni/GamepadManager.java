@@ -115,8 +115,19 @@ public class GamepadManager {
                 GamepadLog.info("macOS: disabled HIDAPI driver (using MFI + IOKit)");
             }
 
-            // Initialize SDL3 with gamepad support
-            boolean result = GamepadJNI.SDL_Init(SDL_INIT_GAMEPAD | SDL_INIT_JOYSTICK);
+            // Initialize SDL3 with gamepad support.
+            //
+            // Android must call SDL_InitSubSystem rather than SDL_Init: the launchers'
+            // bytehook patches the SDL_InitSubSystem symbol, and only when that hook fires
+            // do they System.loadLibrary("SDL3") + SDL.setupJNI() on the ART side, which is
+            // what installs the Java glue SDL's Android joystick driver needs. Calling
+            // SDL_Init would only reach the hook if the library happens to forward to
+            // SDL_InitSubSystem through the PLT, which is not something to rely on.
+            // The two are semantically identical in SDL3 (SDL_Init(flags) *is*
+            // SDL_InitSubSystem(flags)).
+            boolean result = AndroidPlatform.isAndroid()
+                    ? GamepadJNI.SDL_InitSubSystem(SDL_INIT_GAMEPAD | SDL_INIT_JOYSTICK)
+                    : GamepadJNI.SDL_Init(SDL_INIT_GAMEPAD | SDL_INIT_JOYSTICK);
             if (!result) {
                 String error = GamepadJNI.SDL_GetError();
                 GamepadLog.error("[gamepad-jni] SDL_Init failed: {}", error);
@@ -126,8 +137,16 @@ public class GamepadManager {
             initialized = true;
             GamepadLog.info("[gamepad-jni] SDL3 initialized successfully");
 
+            if (AndroidPlatform.isAndroid()) {
+                logAndroidSdlState();
+            }
+
             // Detect currently connected gamepads
             refreshGamepads();
+
+            if (AndroidPlatform.isAndroid() && getGamepadCount() == 0) {
+                GamepadLog.warn("[gamepad-jni] {}", describeNoGamepadHint());
+            }
 
             return true;
         } catch (UnsatisfiedLinkError e) {
@@ -137,6 +156,52 @@ public class GamepadManager {
             GamepadLog.error("[gamepad-jni] Initialization failed: {}", e.getMessage());
             return false;
         }
+    }
+
+    /**
+     * Android-only diagnostics: SDL runtime version, whether we are the first user of
+     * the joystick subsystem, and whether the launcher glue is in place.
+     *
+     * <p>Every call is guarded because the desktop natives already committed to this
+     * repository predate these three bindings; a missing symbol must only skip the
+     * diagnostic, never affect functionality.</p>
+     */
+    private void logAndroidSdlState() {
+        try {
+            int v = GamepadJNI.SDL_GetVersion();
+            int major = v / 1000000;
+            int minor = v / 1000 % 1000;
+            int patch = v % 1000;
+            GamepadLog.info("[gamepad-jni] Android: SDL3 runtime version {}.{}.{}", major, minor, patch);
+            if (major != 3 || minor < 2) {
+                GamepadLog.warn("[gamepad-jni] Android: SDL3 {}.{}.{} is outside the verified range "
+                        + "(>= 3.2.0); behaviour is best-effort", major, minor, patch);
+            }
+        } catch (UnsatisfiedLinkError e) {
+            GamepadLog.warn("[gamepad-jni] Android: SDL_GetVersion unavailable in this build");
+        }
+        try {
+            int joystick = GamepadJNI.SDL_WasInit(SDL_INIT_JOYSTICK);
+            GamepadLog.info("[gamepad-jni] Android: joystick subsystem was {} before our init",
+                    joystick != 0 ? "already initialized (we are a guest)" : "not initialized");
+        } catch (UnsatisfiedLinkError e) {
+            GamepadLog.warn("[gamepad-jni] Android: SDL_WasInit unavailable in this build");
+        }
+    }
+
+    /**
+     * What to tell the player when SDL is ready but no gamepad was found.
+     *
+     * <p>On Android this is usually not a fault: the launchers make "map the gamepad"
+     * and "pass it through to SDL" mutually exclusive paths.</p>
+     */
+    private static String describeNoGamepadHint() {
+        return "SDL3 is ready but no gamepad was found. On Android this usually means the launcher "
+                + "is not routing gamepad input to SDL. Check: (1) the launcher's gamepad control "
+                + "switch is enabled; (2) the gamepad input mode is SDL passthrough / SDL_DIRECT "
+                + "rather than mapped / MAPPED (FCL: enable 'gamepad control' and pick SDL direct; "
+                + "Amethyst: enable gamepadPassthruForced). In MAPPED mode the launcher consumes "
+                + "gamepad input itself, so ControlFlex cannot see it - that is by design.";
     }
 
     /**
@@ -159,7 +224,19 @@ public class GamepadManager {
         gamepads.clear();
         gamepadOrder.clear();
 
-        GamepadJNI.SDL_Quit();
+        // Android: we are a guest in the launcher's SDL instance, and SDL_Quit() is a
+        // process-wide teardown that would also destroy VIDEO/EVENTS the launcher (or,
+        // from MC 26.3 on, the game itself) owns. Release only what we asked for.
+        // Desktop keeps SDL_Quit() so its behaviour is unchanged.
+        if (AndroidPlatform.isAndroid()) {
+            try {
+                GamepadJNI.SDL_QuitSubSystem(SDL_INIT_GAMEPAD | SDL_INIT_JOYSTICK);
+            } catch (UnsatisfiedLinkError e) {
+                GamepadLog.warn("[gamepad-jni] Android: SDL_QuitSubSystem unavailable, skipping");
+            }
+        } else {
+            GamepadJNI.SDL_Quit();
+        }
         initialized = false;
         GamepadLog.info("[gamepad-jni] SDL3 shutdown complete");
     }
