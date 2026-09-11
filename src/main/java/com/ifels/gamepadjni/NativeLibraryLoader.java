@@ -45,17 +45,136 @@ final class NativeLibraryLoader {
         synchronized (NativeLibraryLoader.class) {
             if (loaded) return;
 
-            // Step 1: Determine the native library directory
-            Path nativeDir = findNativeDir();
-
-            // Step 2: Load SDL3 shared library
-            loadSDL3(nativeDir);
-
-            // Step 3: Load the JNI library
-            loadJNILibrary(nativeDir);
+            // Step 1: Android and desktop use different loading chains.
+            if (AndroidPlatform.isAndroid()) {
+                loadAndroid();
+            } else {
+                loadDesktop();
+            }
 
             loaded = true;
         }
+    }
+
+    /**
+     * Desktop chain: extract SDL3 and the JNI library from
+     * {@code native/<platform>/} in the classpath.
+     *
+     * <p>Behaviour is identical to before the Android work.</p>
+     */
+    private static void loadDesktop() {
+        // Step 1: Determine the native library directory
+        Path nativeDir = findNativeDir();
+
+        // Step 2: Load SDL3 shared library
+        loadSDL3(nativeDir);
+
+        // Step 3: Load the JNI library
+        loadJNILibrary(nativeDir);
+    }
+
+    /**
+     * Android chain: SDL3 comes from the launcher APK (whose ART side has already
+     * installed the {@code org.libsdl.app.*} glue), and we only supply our own
+     * {@code libgamepadjni.so}.
+     *
+     * <p>The order is a hard constraint: SDL3 must be loaded first, because the
+     * JNI library's {@code DT_NEEDED} is {@code libSDL3.so} and the dynamic linker
+     * binds it by SONAME to that very instance.</p>
+     */
+    private static void loadAndroid() {
+        logAndroidDiagnostics();
+
+        // (1) SDL3: the launcher's copy only. CFX_LIB_PATH deliberately does NOT
+        //     apply here - loading SDL3 from another path creates a second instance
+        //     which has no launcher glue and can never see a gamepad.
+        Path sdl = loadLauncherSdl3();
+        if (sdl == null) {
+            throw new UnsatisfiedLinkError(
+                    "SDL3 unavailable on Android. Tried: "
+                            + AndroidPlatform.launcherSdlPath(System.getenv("POJAV_NATIVEDIR"))
+                            + " and System.loadLibrary(\"SDL3\"). "
+                            + "See the [gamepad-jni] Android diagnostic lines above.");
+        }
+        GamepadLog.info("[gamepad-jni] Android: loaded SDL3 from {}", sdl);
+
+        // (2) libgamepadjni.so: CFX_LIB_PATH only takes effect at this step.
+        Path override = libPathOverride();
+        if (override != null) {
+            Path jni = override.resolve(getJNIFileName());
+            if (Files.exists(jni)) {
+                System.load(jni.toString());
+                GamepadLog.info("[gamepad-jni] Android: loaded JNI bridge from CFX_LIB_PATH {}", jni);
+                return;
+            }
+        }
+        String platformDir = AndroidPlatform.nativePlatformDir();
+        if (platformDir == null) {
+            throw new UnsatisfiedLinkError(
+                    "Unsupported Android ABI: os.arch=" + System.getProperty("os.arch")
+                            + " (supported: arm64-v8a, armeabi-v7a, x86_64)");
+        }
+        Path dir = extractFromClasspath(platformDir);
+        if (dir == null) {
+            throw new UnsatisfiedLinkError(
+                    "No native/" + platformDir + "/" + getJNIFileName()
+                            + " found in the classpath. Is the mod jar built with Android natives?");
+        }
+        Path jni = dir.resolve(getJNIFileName());
+        System.load(jni.toString());
+        GamepadLog.info("[gamepad-jni] Android: loaded JNI bridge from {}", jni);
+    }
+
+    /**
+     * Load the launcher-provided SDL3 on Android.
+     *
+     * @return the path actually used, or {@code null} if both strategies failed
+     */
+    private static Path loadLauncherSdl3() {
+        String path = AndroidPlatform.launcherSdlPath(System.getenv("POJAV_NATIVEDIR"));
+        if (path != null) {
+            try {
+                System.load(path);
+                return Paths.get(path);
+            } catch (UnsatisfiedLinkError e) {
+                GamepadLog.warn("[gamepad-jni] Android: System.load({}) failed: {}", path, e.getMessage());
+            }
+        }
+        try {
+            System.loadLibrary("SDL3");
+            return Paths.get("libSDL3.so (resolved via java.library.path)");
+        } catch (UnsatisfiedLinkError e) {
+            GamepadLog.warn("[gamepad-jni] Android: System.loadLibrary(\"SDL3\") failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** The CFX_LIB_PATH override directory, or {@code null} when unset / not a directory. */
+    private static Path libPathOverride() {
+        String libPath = System.getProperty("CFX_LIB_PATH");
+        if (libPath == null || libPath.isEmpty()) {
+            libPath = System.getenv("CFX_LIB_PATH");
+        }
+        if (libPath == null || libPath.isEmpty()) {
+            return null;
+        }
+        Path dir = Paths.get(libPath);
+        return Files.isDirectory(dir) ? dir : null;
+    }
+
+    /**
+     * One-shot diagnostic block. Reported "SDL3 not found" issues are diagnosed
+     * from exactly these lines, so keep them in one place and log them once.
+     */
+    private static void logAndroidDiagnostics() {
+        GamepadLog.info("[gamepad-jni] Android platform: os.name={} os.version={} os.arch={} vm={}",
+                System.getProperty("os.name"), System.getProperty("os.version"),
+                System.getProperty("os.arch"), System.getProperty("java.vm.name"));
+        GamepadLog.info("[gamepad-jni] Android env: POJAV_NATIVEDIR={} tmpdir={} abiDir={}",
+                System.getenv("POJAV_NATIVEDIR"), System.getProperty("java.io.tmpdir"),
+                AndroidPlatform.nativePlatformDir());
+        GamepadLog.info("[gamepad-jni] Android java.library.path={}",
+                System.getProperty("java.library.path"));
     }
 
     /**
