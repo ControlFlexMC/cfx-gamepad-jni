@@ -182,12 +182,22 @@ set_target_properties(gamepadjni PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
 
-# Android 15+ requires shared libraries to be 16 KB page aligned.
-# NDK r26 does not do this by default; r27+ does.
+# Android page-size alignment.
+#
+# Devices with 16 KB pages (Android 15+ on some hardware) require p_align 16384;
+# 4 KB-page devices accept either. Overridable for A/B testing with
+#   -DCFX_ANDROID_MAX_PAGE_SIZE=4096
+#
+# Only max-page-size is set, matching Google's documented recipe. Setting
+# common-page-size to 16384 as well is non-standard, and was observed to make
+# bionic fail with "can't enable GNU RELRO protection ... Out of memory" when
+# dlopen'ing the library from the app cache on Android 10 (4 KB pages).
 if(ANDROID)
+    if(NOT DEFINED CFX_ANDROID_MAX_PAGE_SIZE)
+        set(CFX_ANDROID_MAX_PAGE_SIZE 16384)
+    endif()
     target_link_options(gamepadjni PRIVATE
-        "-Wl,-z,max-page-size=16384"
-        "-Wl,-z,common-page-size=16384")
+        "-Wl,-z,max-page-size=${CFX_ANDROID_MAX_PAGE_SIZE}")
 endif()
 
 # Windows: remove 'lib' prefix from DLL (Windows convention: SDL3.dll, not libSDL3.dll)
