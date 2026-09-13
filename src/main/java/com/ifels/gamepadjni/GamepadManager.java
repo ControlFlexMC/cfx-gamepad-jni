@@ -155,6 +155,13 @@ public class GamepadManager {
         } catch (Exception e) {
             GamepadLog.error("[gamepad-jni] Initialization failed: {}", e.getMessage());
             return false;
+        } catch (Throwable t) {
+            // Last line of defence: native loading can raise Errors (e.g. a
+            // NoClassDefFoundError left pending by a JNI_OnLoad). Per the design,
+            // controlflex must lose controllers, not the game.
+            GamepadLog.error("[gamepad-jni] Initialization failed with {}: {}",
+                    t.getClass().getName(), t.getMessage());
+            return false;
         }
     }
 

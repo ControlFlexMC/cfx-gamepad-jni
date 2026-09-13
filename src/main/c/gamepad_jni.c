@@ -13,6 +13,31 @@
 #include <string.h>
 
 /* ═══════════════════════════════════════════
+ * JNI_OnLoad
+ *
+ * This must be defined, even though we register nothing: without it the JVM's
+ * lookup of "JNI_OnLoad" on OUR library handle falls through to our dependencies
+ * (POSIX dlsym searches the library and its dependency chain), and on Android
+ * libSDL3.so exports one. SDL's Android JNI_OnLoad calls register_methods() for
+ * org.libsdl.app.*, whose FindClass leaves a pending NoClassDefFoundError when
+ * those classes live in the launcher's ART runtime rather than in the game JVM.
+ * SDL never clears that exception, so it surfaces out of System.load() and, being
+ * an Error rather than an UnsatisfiedLinkError, used to crash the game at
+ * entrypoint init. Verified on device: dlsym(jniHandle, "JNI_OnLoad") returned
+ * the exact same address as dlsym(sdlHandle, "JNI_OnLoad").
+ *
+ * Desktop SDL builds have no JNI_OnLoad (SDL_android.c is Android-only), which is
+ * why this only ever broke on Android.
+ * ═══════════════════════════════════════════ */
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
+    (void)vm;
+    (void)reserved;
+    /* 1_6, not 1_8: the NDK's jni.h does not define JNI_VERSION_1_8, and 1.6 is
+     * what ART and every supported HotSpot accept. We register nothing here. */
+    return JNI_VERSION_1_6;
+}
+
+/* ═══════════════════════════════════════════
  * Helper: throw a RuntimeException from JNI
  * ═══════════════════════════════════════════ */
 static void throwRuntimeException(JNIEnv *env, const char *msg) {

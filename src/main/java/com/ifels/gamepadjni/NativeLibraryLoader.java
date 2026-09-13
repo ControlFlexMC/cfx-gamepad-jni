@@ -103,7 +103,7 @@ final class NativeLibraryLoader {
         if (override != null) {
             Path jni = override.resolve(getJNIFileName());
             if (Files.exists(jni)) {
-                System.load(jni.toString());
+                loadJniBridge(jni);
                 GamepadLog.info("[gamepad-jni] Android: loaded JNI bridge from CFX_LIB_PATH {}", jni);
                 return;
             }
@@ -121,8 +121,28 @@ final class NativeLibraryLoader {
                             + " found in the classpath. Is the mod jar built with Android natives?");
         }
         Path jni = dir.resolve(getJNIFileName());
-        System.load(jni.toString());
+        loadJniBridge(jni);
         GamepadLog.info("[gamepad-jni] Android: loaded JNI bridge from {}", jni);
+    }
+
+    /**
+     * Load our own JNI bridge, converting every failure into an
+     * {@link UnsatisfiedLinkError} so callers keep a single failure mode.
+     *
+     * <p>{@code Throwable} rather than {@code UnsatisfiedLinkError}: a native load
+     * can also surface an {@code Error} (for example a {@code NoClassDefFoundError}
+     * left pending by a {@code JNI_OnLoad} the JVM ran on this handle). Per spec
+     * 5.3 any such failure must degrade to "no controller", never reach the game
+     * entrypoint.</p>
+     */
+    private static void loadJniBridge(Path jni) {
+        try {
+            System.load(jni.toString());
+        } catch (Throwable t) {
+            throw new UnsatisfiedLinkError(
+                    "Failed to load " + jni + ": " + t.getClass().getName()
+                            + (t.getMessage() != null ? ": " + t.getMessage() : ""));
+        }
     }
 
     /**
@@ -136,15 +156,20 @@ final class NativeLibraryLoader {
             try {
                 System.load(path);
                 return Paths.get(path);
-            } catch (UnsatisfiedLinkError e) {
-                GamepadLog.warn("[gamepad-jni] Android: System.load({}) failed: {}", path, e.getMessage());
+            } catch (Throwable t) {
+                // Throwable, not just UnsatisfiedLinkError: the JVM resolves JNI_OnLoad on
+                // this handle and can end up running SDL's (see gamepad_jni.c), which leaves
+                // a pending NoClassDefFoundError. An Error must never escape this method.
+                GamepadLog.warn("[gamepad-jni] Android: System.load({}) failed: {}: {}",
+                        path, t.getClass().getName(), t.getMessage());
             }
         }
         try {
             System.loadLibrary("SDL3");
             return Paths.get("libSDL3.so (resolved via java.library.path)");
-        } catch (UnsatisfiedLinkError e) {
-            GamepadLog.warn("[gamepad-jni] Android: System.loadLibrary(\"SDL3\") failed: {}", e.getMessage());
+        } catch (Throwable t) {
+            GamepadLog.warn("[gamepad-jni] Android: System.loadLibrary(\"SDL3\") failed: {}: {}",
+                    t.getClass().getName(), t.getMessage());
             return null;
         }
     }
