@@ -134,3 +134,65 @@ log_info "Done. Artifacts:"
 for abi in "${ABIS[@]}"; do
     ls -la "${INSTALL_DIR}/android-${abi}/libgamepadjni.so"
 done
+
+# ── Regression guard: RELRO must fit inside the mapping ──────
+#
+# bionic rounds the PT_GNU_RELRO range out to the RUNTIME page size (4 KB on most
+# devices, including Android 10) before mprotect'ing it. If the rounded range
+# reaches past the end of the last PT_LOAD mapping, mprotect fails with ENOMEM and
+# dlopen dies with:
+#   dlopen failed: can't enable GNU RELRO protection for "...": Out of memory
+#
+# That is exactly what -Wl,-z,common-page-size=16384 caused: it inflated RELRO's
+# p_memsz by one page. max-page-size alone does not, so only that is set in
+# CMakeLists.txt. This check keeps a future change from reintroducing it.
+#
+# Note this checks the 4 KB case only; 16 KB devices are covered by p_align=0x4000,
+# which CMAKE's target_link_options still applies.
+python3 - "${INSTALL_DIR}" "${ABIS[@]}" <<'PYEOF'
+import struct, sys, pathlib
+
+install_dir, abis = sys.argv[1], sys.argv[2:]
+PAGE = 0x1000
+failed = False
+
+for abi in abis:
+    p = pathlib.Path(install_dir) / f"android-{abi}" / "libgamepadjni.so"
+    d = p.read_bytes()
+    is64 = d[4] == 2
+    e = '<' if d[5] == 1 else '>'
+    if is64:
+        phoff, = struct.unpack_from(e + 'Q', d, 0x20)
+        phentsize, phnum = struct.unpack_from(e + 'HH', d, 0x36)
+    else:
+        phoff, = struct.unpack_from(e + 'I', d, 0x1C)
+        phentsize, phnum = struct.unpack_from(e + 'HH', d, 0x2A)
+
+    load_end = 0
+    relro_va = relro_msz = None
+    aligns = set()
+    for i in range(phnum):
+        v = struct.unpack_from(e + ('IIQQQQQQ' if is64 else 'IIIIIIII'), d, phoff + i * phentsize)
+        if is64:
+            p_type, p_va, p_msz, p_align = v[0], v[3], v[6], v[7]
+        else:
+            p_type, p_va, p_msz, p_align = v[0], v[2], v[5], v[7]
+        if p_type == 1:
+            load_end = max(load_end, p_va + p_msz)
+            aligns.add(p_align)
+        elif p_type == 0x6474E552:
+            relro_va, relro_msz = p_va, p_msz
+
+    mapped_end = (load_end + PAGE - 1) & ~(PAGE - 1)
+    relro_end = (relro_va + relro_msz + PAGE - 1) & ~(PAGE - 1)
+    ok = relro_end <= mapped_end
+    if not ok:
+        failed = True
+    print(f"[build-jni-android] {abi}: p_align={sorted(hex(a) for a in aligns)} "
+          f"RELRO_end={hex(relro_end)} mapped_end={hex(mapped_end)} "
+          f"{'OK' if ok else 'OVERFLOWS THE MAPPING -> dlopen will fail with ENOMEM'}")
+
+if failed:
+    sys.exit("[build-jni-android] FATAL: RELRO does not fit the mapping; "
+             "check -Wl,-z,common-page-size in CMakeLists.txt")
+PYEOF
