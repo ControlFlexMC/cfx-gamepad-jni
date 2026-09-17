@@ -119,6 +119,13 @@ public class GamepadManager {
                 GamepadLog.info("macOS: disabled HIDAPI driver (using MFI + IOKit)");
             }
 
+            // Default SDL drops joystick updates when a window exists but does
+            // not have keyboard focus. Bundled SDL had no window; host/Minecraft
+            // SDL3 does, so unfocused play needs this hint.
+            GamepadJNI.SDL_SetHintWithPriority(
+                    "SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS", "1", 2 /* SDL_HINT_OVERRIDE */);
+            GamepadLog.info("[gamepad-jni] SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS=1");
+
             // Use InitSubSystem so a host that already called SDL_Init (Minecraft 26.3
             // video) is not torn down later. SDL_Quit() would destroy that video.
             int already = GamepadJNI.SDL_WasInit(0);
