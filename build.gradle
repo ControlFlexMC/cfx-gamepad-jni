@@ -36,7 +36,7 @@ jar {
     // Include native libraries inside the JAR
     from('prebuilt/sdl') {
         include 'windows-x86_64/*.dll'
-        //include 'windows-aarch64/*.dll'
+        include 'windows-aarch64/*.dll'
         include 'darwin-aarch64/*.dylib'
         include 'darwin-x86_64/*.dylib'
         include 'linux-x86_64/*.so*'
@@ -45,7 +45,7 @@ jar {
     }
     from('prebuilt/jni') {
         include 'windows-x86_64/*.dll'
-        //include 'windows-aarch64/*.dll'
+        include 'windows-aarch64/*.dll'
         include 'darwin-aarch64/*.dylib'
         include 'darwin-x86_64/*.dylib'
         include 'linux-x86_64/*.so*'

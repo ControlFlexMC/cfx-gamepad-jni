@@ -39,6 +39,24 @@ public final class GamepadJNI {
     /** Shut down all SDL subsystems. */
     public static native void SDL_Quit();
 
+    /**
+     * Shut down specific SDL subsystems.
+     *
+     * <p>Prefer this over {@link #SDL_Quit()} when sharing a process-wide SDL
+     * (e.g. Minecraft 26.3 already initialized video).</p>
+     *
+     * @param flags subsystem flags previously passed to {@link #SDL_InitSubSystem}
+     */
+    public static native void SDL_QuitSubSystem(int flags);
+
+    /**
+     * Return the SDL subsystems currently initialized (bitwise AND of {@code flags}).
+     *
+     * @param flags subsystem flags to query, or 0 for all
+     * @return initialized flags
+     */
+    public static native int SDL_WasInit(int flags);
+
     /** Get the last SDL error string. */
     public static native String SDL_GetError();
 

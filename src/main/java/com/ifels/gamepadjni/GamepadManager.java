@@ -50,6 +50,8 @@ public class GamepadManager {
     private static volatile GamepadManager instance;
 
     private volatile boolean initialized = false;
+    /** True when this manager started SDL from scratch and may call {@code SDL_Quit()}. */
+    private volatile boolean ownsSdlLifecycle = false;
     private volatile boolean pollThreadRunning = false;
     private Thread pollThread;
 
@@ -87,8 +89,10 @@ public class GamepadManager {
      * Initialize SDL3 and load native libraries.
      *
      * <p>This must be called before any other gamepad operations.
-     * It loads the JNI native library and SDL3 shared library,
-     * then initializes the SDL3 gamepad subsystem.</p>
+     * It loads the JNI native library (and SDL3 only when the host process does
+     * not already provide one), then initializes the SDL3 gamepad subsystem
+     * with {@code SDL_InitSubSystem} so a host such as Minecraft 26.3 can keep
+     * its own video SDL instance.</p>
      *
      * @return true on success, false on failure
      */
@@ -115,16 +119,26 @@ public class GamepadManager {
                 GamepadLog.info("macOS: disabled HIDAPI driver (using MFI + IOKit)");
             }
 
-            // Initialize SDL3 with gamepad support
-            boolean result = GamepadJNI.SDL_Init(SDL_INIT_GAMEPAD | SDL_INIT_JOYSTICK);
+            // Use InitSubSystem so a host that already called SDL_Init (Minecraft 26.3
+            // video) is not torn down later. SDL_Quit() would destroy that video.
+            int already = GamepadJNI.SDL_WasInit(0);
+            boolean result = GamepadJNI.SDL_InitSubSystem(SDL_INIT_GAMEPAD | SDL_INIT_JOYSTICK);
             if (!result) {
                 String error = GamepadJNI.SDL_GetError();
-                GamepadLog.error("[gamepad-jni] SDL_Init failed: {}", error);
+                GamepadLog.error("[gamepad-jni] SDL_InitSubSystem failed: {}", error);
                 return false;
             }
+            // Host (Minecraft) owns the process-wide SDL even if we called
+            // InitSubSystem first — never SDL_Quit() that mapping later.
+            ownsSdlLifecycle = already == 0 && !NativeLibraryLoader.usedHostSdl3();
 
             initialized = true;
-            GamepadLog.info("[gamepad-jni] SDL3 initialized successfully");
+            if (NativeLibraryLoader.usedHostSdl3()) {
+                GamepadLog.info("[gamepad-jni] SDL3 gamepad subsystem initialized (host SDL3, wasInit=0x{})",
+                        Integer.toHexString(already));
+            } else {
+                GamepadLog.info("[gamepad-jni] SDL3 initialized successfully (bundled)");
+            }
 
             // Detect currently connected gamepads
             refreshGamepads();
@@ -159,9 +173,13 @@ public class GamepadManager {
         gamepads.clear();
         gamepadOrder.clear();
 
-        GamepadJNI.SDL_Quit();
+        GamepadJNI.SDL_QuitSubSystem(SDL_INIT_GAMEPAD | SDL_INIT_JOYSTICK);
+        if (ownsSdlLifecycle) {
+            GamepadJNI.SDL_Quit();
+        }
+        ownsSdlLifecycle = false;
         initialized = false;
-        GamepadLog.info("[gamepad-jni] SDL3 shutdown complete");
+        GamepadLog.info("[gamepad-jni] SDL3 gamepad subsystem shutdown complete");
     }
 
     /** Check if SDL3 has been initialized. */

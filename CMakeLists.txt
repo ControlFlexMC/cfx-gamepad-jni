@@ -111,10 +111,16 @@ target_include_directories(gamepadjni PRIVATE
     ${JAVA_INCLUDE_PATH2}
 )
 
-# Link against SDL3
-target_link_libraries(gamepadjni PRIVATE
-    ${SDL3_LIBRARY}
-)
+# Link against SDL3 on non-Apple platforms. On macOS, resolve SDL3 from the
+# already-loaded process image (Minecraft 26.3 / LWJGL) so we do not pull in a
+# second copy via @rpath/@loader_path. Headers are still required to compile.
+if(APPLE)
+    target_link_options(gamepadjni PRIVATE -undefined dynamic_lookup)
+else()
+    target_link_libraries(gamepadjni PRIVATE
+        ${SDL3_LIBRARY}
+    )
+endif()
 
 # macOS: link frameworks for GCController queries
 if(APPLE)

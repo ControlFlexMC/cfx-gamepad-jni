@@ -14,12 +14,17 @@ Control Flex uses this library to provide cross-platform gamepad support (Xbox, 
 
 ## Native Libraries
 
-This project produces two native libraries per platform:
+This project produces a JNI library per platform. SDL3 is resolved in this order:
 
-| Library              | Source                               | Description                          |
-| -------------------- | ------------------------------------ | ------------------------------------ |
-| `libgamepadjni.so` / `.dylib` / `.dll` | `src/main/c/` (built via CMake)       | JNI bridge between Java and SDL3     |
-| `libSDL3.so` / `libSDL3.0.dylib` / `SDL3.dll` | `third_party/SDL/` (built via `prebuilt/build-sdl3.sh`) | Trimmed SDL3 — input devices only    |
+1. **Host SDL3** — Minecraft 26.3 / LWJGL already loaded `libSDL3` into the process. The JNI library binds to that copy (`SDL_InitSubSystem` / `SDL_QuitSubSystem`; never `SDL_Quit()` while sharing).
+2. **Bundled fallback** — the same LWJGL 3.4.3 SDL3 binaries Minecraft 26.3 ships, stored under `prebuilt/sdl/<platform>/`.
+
+| Library | Source | Description |
+| --- | --- | --- |
+| `libgamepadjni.so` / `.dylib` / `.dll` | `src/main/c/` (CMake) | JNI bridge to the SDL3 gamepad API |
+| `libSDL3.so` / `libSDL3.0.dylib` / `SDL3.dll` | LWJGL 3.4.3 (Minecraft 26.3) | Fallback SDL3 when no host copy is present |
+
+Set `-Dcfx.gamepadjni.forceBundledSdl3=true` to ignore host SDL3.
 
 ### Library file names by platform
 

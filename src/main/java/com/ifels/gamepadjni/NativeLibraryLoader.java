@@ -4,22 +4,28 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
+import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 
 /**
- * Loads native libraries (SDL3 and gamepad-jni JNI) from the JAR or filesystem.
+ * Loads native libraries (SDL3 and gamepad-jni JNI) from the host process, the JAR,
+ * or the filesystem.
  *
- * <p>Loading strategy:</p>
+ * <p>Loading strategy for SDL3:</p>
  * <ol>
- *   <li>Extract from classpath (bundled in JAR) to a temp directory</li>
- *   <li>Try system property {@code CFX_LIB_PATH} or env var {@code CFX_LIB_PATH}</li>
- *   <li>Try java.library.path</li>
+ *   <li>Prefer Minecraft/LWJGL's SDL3 from {@code org.lwjgl.librarypath}
+ *       ({@code libSDL3.dylib} / {@code libSDL3.so} / {@code SDL3.dll}).
+ *       {@code System.load} that host file so JNI shares the same mapping;
+ *       never extract or load the bundled SDL3 in that case.</li>
+ *   <li>Otherwise load from {@code org.lwjgl.librarypath}, {@code java.library.path},
+ *       or an extracted bundled native.</li>
  * </ol>
  *
- * <p>The loading order is: SDL3 shared library first, then the JNI native library.</p>
+ * <p>The JNI library is always extracted/loaded after SDL3 is available in the
+ * process. Set {@code cfx.gamepadjni.forceBundledSdl3=true} to skip host sharing.</p>
  */
 final class NativeLibraryLoader {
 
@@ -29,7 +35,15 @@ final class NativeLibraryLoader {
     /** Flag to prevent double loading. */
     private static volatile boolean loaded = false;
 
+    /** True when SDL3 was adopted from the host / LWJGL instead of the bundled copy. */
+    private static volatile boolean hostSdl3 = false;
+
     private NativeLibraryLoader() {
+    }
+
+    /** Whether this process is using a host-provided SDL3 (not the bundled native). */
+    static boolean usedHostSdl3() {
+        return hostSdl3;
     }
 
     /**
@@ -45,33 +59,129 @@ final class NativeLibraryLoader {
         synchronized (NativeLibraryLoader.class) {
             if (loaded) return;
 
-            // Step 1: Determine the native library directory
-            Path nativeDir = findNativeDir();
+            boolean adoptHost = !forceBundledSdl3() && tryAdoptHostSdl3();
+            hostSdl3 = adoptHost;
 
-            // Step 2: Load SDL3 shared library
-            loadSDL3(nativeDir);
+            Path nativeDir = findNativeDir(adoptHost);
+            if (!adoptHost) {
+                loadSDL3(nativeDir);
+            } else {
+                GamepadLog.info("[gamepad-jni] using host SDL3 (Minecraft/LWJGL); bundled SDL3 not loaded");
+            }
 
-            // Step 3: Load the JNI library
             loadJNILibrary(nativeDir);
 
             loaded = true;
         }
     }
 
+    private static boolean forceBundledSdl3() {
+        return Boolean.parseBoolean(System.getProperty("cfx.gamepadjni.forceBundledSdl3", "false"));
+    }
+
+    /**
+     * Reuse SDL3 already mapped into this JVM (LWJGL) or load it from LWJGL's
+     * native directory without extracting our bundled copy.
+     */
+    private static boolean tryAdoptHostSdl3() {
+        if (isLwjglSdlClassPresent()) {
+            Path lwjglDir = firstExistingDir(
+                    System.getProperty("org.lwjgl.librarypath"),
+                    System.getProperty("org.lwjgl.librarypath.sdl"));
+            Path sdl = lwjglDir != null ? findSdl3File(lwjglDir) : null;
+            if (sdl != null) {
+                // ControlFlex initializes before Minecraft creates the window, so SDL3
+                // is not mapped yet. Load the same host file LWJGL will use — not a
+                // second copy. System.load of an already-mapped path is a no-op.
+                System.load(sdl.toString());
+                GamepadLog.info("[gamepad-jni] loaded host SDL3 from {}", sdl);
+                return true;
+            }
+            GamepadLog.info("[gamepad-jni] LWJGL SDL class present but host native not found on library path");
+        }
+
+        Path fromEnv = firstExistingDir(
+                System.getProperty("cfx.gamepadjni.hostSdl3Dir"),
+                System.getenv("CFX_HOST_SDL3_DIR"));
+        if (fromEnv != null) {
+            Path sdl = findSdl3File(fromEnv);
+            if (sdl != null) {
+                System.load(sdl.toString());
+                GamepadLog.info("[gamepad-jni] loaded host SDL3 from {}", sdl);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isLwjglSdlClassPresent() {
+        try {
+            Class.forName("org.lwjgl.sdl.SDL", false, NativeLibraryLoader.class.getClassLoader());
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private static Path firstExistingDir(String... candidates) {
+        if (candidates == null) return null;
+        for (String raw : candidates) {
+            if (raw == null || raw.isEmpty()) continue;
+            Path dir = Paths.get(raw);
+            if (Files.isDirectory(dir)) {
+                return dir;
+            }
+        }
+        return null;
+    }
+
+    private static Path findSdl3File(Path dir) {
+        String primary = getSDL3FileName();
+        Path exact = dir.resolve(primary);
+        if (Files.isRegularFile(exact)) {
+            return exact;
+        }
+        String osName = System.getProperty("os.name", "").toLowerCase();
+        String[] aliases;
+        if (osName.contains("mac")) {
+            aliases = new String[]{"libSDL3.dylib", "libSDL3.0.dylib"};
+        } else if (osName.contains("win")) {
+            aliases = new String[]{"SDL3.dll"};
+        } else {
+            aliases = new String[]{"libSDL3.so", "libSDL3.so.0"};
+        }
+        for (String name : aliases) {
+            Path p = dir.resolve(name);
+            if (Files.isRegularFile(p)) {
+                return p;
+            }
+        }
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir)) {
+            for (Path p : stream) {
+                String name = p.getFileName().toString();
+                if (name.contains("SDL3") && Files.isRegularFile(p)) {
+                    return p;
+                }
+            }
+        } catch (IOException ignored) {
+        }
+        return null;
+    }
+
     /**
      * Find the directory containing native libraries.
+     *
+     * @param hostSdl3AlreadyAvailable when true, bundled SDL3 is not extracted
      */
-    private static Path findNativeDir() {
-        // Strategy 1: Extract from classpath (bundled natives)
+    private static Path findNativeDir(boolean hostSdl3AlreadyAvailable) {
         String platformDir = getPlatformDir();
         if (platformDir != null) {
-            Path extracted = extractFromClasspath(platformDir);
+            Path extracted = extractFromClasspath(platformDir, !hostSdl3AlreadyAvailable);
             if (extracted != null) {
                 return extracted;
             }
         }
 
-        // Strategy 2: User-specified override (system property or env var)
         String libPath = System.getProperty("CFX_LIB_PATH");
         if (libPath == null || libPath.isEmpty()) {
             libPath = System.getenv("CFX_LIB_PATH");
@@ -83,7 +193,6 @@ final class NativeLibraryLoader {
             }
         }
 
-        // Strategy 3: Fallback - let JVM use java.library.path
         return null;
     }
 
@@ -92,15 +201,13 @@ final class NativeLibraryLoader {
      */
     private static void loadSDL3(Path nativeDir) {
         if (nativeDir != null) {
-            String sdlFileName = getSDL3FileName();
-            Path sdlPath = nativeDir.resolve(sdlFileName);
-            if (Files.exists(sdlPath)) {
+            Path sdlPath = findSdl3File(nativeDir);
+            if (sdlPath != null) {
                 System.load(sdlPath.toString());
                 return;
             }
         }
 
-        // Fallback to system library path
         try {
             System.loadLibrary(SDL_LIB_NAME);
         } catch (UnsatisfiedLinkError e) {
@@ -125,7 +232,6 @@ final class NativeLibraryLoader {
             }
         }
 
-        // Fallback to system library path
         try {
             System.loadLibrary(JNI_LIB_NAME);
         } catch (UnsatisfiedLinkError e) {
@@ -141,18 +247,20 @@ final class NativeLibraryLoader {
      * Extract native libraries from the classpath to a temp directory.
      *
      * @param platformDir platform-specific directory name (e.g. "darwin-aarch64")
+     * @param extractSdl3 whether to extract bundled SDL3 (false when sharing host SDL3)
      * @return path to extracted directory, or null on failure
      */
-    private static Path extractFromClasspath(String platformDir) {
+    private static Path extractFromClasspath(String platformDir, boolean extractSdl3) {
         try {
             Path tempDir = Files.createTempDirectory("gamepadjni-");
             tempDir.toFile().deleteOnExit();
 
-            // Extract SDL3 library
-            String sdlResource = "native/" + platformDir + "/" + getSDL3FileName();
-            boolean sdlExtracted = extractResource(sdlResource, tempDir.resolve(getSDL3FileName()));
+            boolean sdlExtracted = false;
+            if (extractSdl3) {
+                String sdlResource = "native/" + platformDir + "/" + getSDL3FileName();
+                sdlExtracted = extractResource(sdlResource, tempDir.resolve(getSDL3FileName()));
+            }
 
-            // Extract JNI library
             String jniResource = "native/" + platformDir + "/" + getJNIFileName();
             boolean jniExtracted = extractResource(jniResource, tempDir.resolve(getJNIFileName()));
 
@@ -160,7 +268,6 @@ final class NativeLibraryLoader {
                 return tempDir;
             }
 
-            // Nothing extracted, clean up
             deleteDirectory(tempDir);
             return null;
         } catch (IOException e) {
@@ -180,6 +287,7 @@ final class NativeLibraryLoader {
         try (InputStream in = url.openStream()) {
             Files.copy(in, targetPath, StandardCopyOption.REPLACE_EXISTING);
             targetPath.toFile().setReadable(true, false);
+            targetPath.toFile().setExecutable(true, false);
             return true;
         } catch (IOException e) {
             return false;
