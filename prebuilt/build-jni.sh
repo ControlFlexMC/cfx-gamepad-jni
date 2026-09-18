@@ -11,7 +11,8 @@
 #     prebuilt/jni/linux-x86_64/libgamepadjni.so       - Linux x64
 #     prebuilt/jni/linux-aarch64/libgamepadjni.so      - Linux ARM64
 #   Windows:
-#     prebuilt/jni/windows-x86_64/gamepadjni.dll       - Windows x64
+#     prebuilt/jni/windows-x86_64/gamepadjni.dll       - Windows x64 (native: MinGW + CMake)
+#     prebuilt/jni/windows-aarch64/gamepadjni.dll      - Windows ARM64 (cross-compiled)
 #
 # Usage:
 #   All platforms:
@@ -27,6 +28,20 @@
 #
 #   Windows (double-click):
 #     Simply double-click build-jni-windows.bat
+#
+# Windows ARM64 cross-compile (from an x86_64 Windows host):
+#   CMake cannot drive this target — the host MSYS2/MinGW toolchain is x86_64-only
+#   and ships no aarch64 sysroot. A clang/lld cross toolchain is used instead;
+#   either of these, whichever is found on PATH:
+#     zig          https://ziglang.org            (zig cc -target aarch64-windows-gnu)
+#     llvm-mingw   https://github.com/mstorsjo/llvm-mingw   (aarch64-w64-mingw32-clang)
+#   JNI headers come from JAVA_HOME, or from JNI_HEADERS_DIR when the host has no
+#   Windows JDK (the win32 JNI headers are architecture neutral):
+#
+#     JNI_HEADERS_DIR=/d/toolchains/jni-headers ./build-jni.sh --arch aarch64
+#
+#   WINDOWS_AARCH64_CC overrides the compiler command, e.g.
+#     WINDOWS_AARCH64_CC="aarch64-w64-mingw32-clang" ./build-jni.sh --arch aarch64
 #
 
 set -euo pipefail
@@ -77,15 +92,76 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ─────────────────────────────────────────────
+# Windows ARM64 cross toolchain
+# ─────────────────────────────────────────────
+# Filled by detect_windows_aarch64_cc(); empty means "not available".
+AARCH64_CC_CMD=()
+
+# Resolve the cross compiler for windows-aarch64. clang + lld is what makes this
+# viable: lld resolves SDL3 straight from the DLL's export table, so
+# prebuilt/sdl/windows-aarch64/ needs no import library (the x86_64 .dll.a was
+# deleted in 0e24ee3 for the same reason).
+detect_windows_aarch64_cc() {
+    AARCH64_CC_CMD=()
+
+    if [ -n "${WINDOWS_AARCH64_CC:-}" ]; then
+        # Deliberate word splitting: the override may carry several words.
+        # shellcheck disable=SC2206
+        AARCH64_CC_CMD=(${WINDOWS_AARCH64_CC})
+        echo "  cross compiler: ${AARCH64_CC_CMD[*]} (from WINDOWS_AARCH64_CC)"
+        return 0
+    fi
+
+    if command -v aarch64-w64-mingw32-clang &>/dev/null; then
+        AARCH64_CC_CMD=(aarch64-w64-mingw32-clang)
+        echo "  cross compiler: aarch64-w64-mingw32-clang (llvm-mingw)"
+        return 0
+    fi
+
+    if command -v zig &>/dev/null; then
+        AARCH64_CC_CMD=(zig cc -target aarch64-windows-gnu)
+        echo "  cross compiler: zig cc -target aarch64-windows-gnu (zig $(zig version 2>/dev/null || echo '?'))"
+        return 0
+    fi
+
+    return 1
+}
+
+# ─────────────────────────────────────────────
 # Determine architectures to build
 # ─────────────────────────────────────────────
 if [ "$BUILD_ALL" = true ]; then
     case "$OS_NAME" in
         Darwin)         ARCHS=("arm64" "x86_64") ;;
         Linux)          ARCHS=("x86_64" "aarch64") ;;
-        MINGW*|MSYS*)   ARCHS=("x86_64") ;;
+        MINGW*|MSYS*)
+            # aarch64 is cross-compiled and needs a toolchain the host may not
+            # have; --all builds what it can instead of failing outright.
+            ARCHS=("x86_64")
+            if detect_windows_aarch64_cc &>/dev/null; then
+                ARCHS+=("aarch64")
+            else
+                echo "Note: skipping windows-aarch64 — no aarch64 cross toolchain found"
+                echo "      install zig or llvm-mingw, or set WINDOWS_AARCH64_CC"
+            fi
+            ;;
     esac
 elif [ -n "$TARGET_ARCH" ]; then
+    if [[ "$OS_NAME" == MINGW* || "$OS_NAME" == MSYS* ]]; then
+        if [ "$TARGET_ARCH" = "aarch64" ]; then
+            if ! detect_windows_aarch64_cc; then
+                echo "Error: no Windows ARM64 cross toolchain found"
+                echo "  Install one of:"
+                echo "    zig         https://ziglang.org/download/"
+                echo "    llvm-mingw  https://github.com/mstorsjo/llvm-mingw"
+                echo "  Or set WINDOWS_AARCH64_CC to your compiler command."
+                exit 1
+            fi
+        elif [ "$TARGET_ARCH" != "x86_64" ]; then
+            echo "Error: Windows supports --arch x86_64 (native) and --arch aarch64 (cross)"
+            exit 1
+        fi
+    fi
     ARCHS=("$TARGET_ARCH")
 else
     case "$OS_NAME" in
@@ -129,6 +205,13 @@ detect_java_home() {
     esac
 
     if [ -z "${JAVA_HOME:-}" ]; then
+        # The windows-aarch64 cross build needs only the (architecture neutral) JNI
+        # headers, so a headers-only directory is enough when no JDK is installed.
+        if [ -n "${JNI_HEADERS_DIR:-}" ]; then
+            echo "JAVA_HOME not set; JNI headers come from JNI_HEADERS_DIR=${JNI_HEADERS_DIR}"
+            return
+        fi
+
         echo "Error: JAVA_HOME not set and cannot be auto-detected"
         case "$OS_NAME" in
             Darwin)   echo "   Please set JAVA_HOME or install a JDK" ;;
@@ -164,8 +247,28 @@ get_cpu_count() {
 # ─────────────────────────────────────────────
 # Check build environment
 # ─────────────────────────────────────────────
+# True when at least one requested architecture is built with CMake + the host
+# compiler. A windows-aarch64-only run needs neither, so the checks below are
+# skipped for it.
+needs_host_toolchain() {
+    local arch
+    for arch in "${ARCHS[@]}"; do
+        if [[ "$OS_NAME" == MINGW* ]] || [[ "$OS_NAME" == MSYS* ]]; then
+            [ "$arch" = "aarch64" ] || return 0
+        else
+            return 0
+        fi
+    done
+    return 1
+}
+
 check_prerequisites() {
     log_info "Checking build environment (${OS_NAME})"
+
+    if ! needs_host_toolchain; then
+        echo "Cross-compile only (windows-aarch64): cmake/gcc on the host are not used"
+        return
+    fi
 
     if ! command -v cmake &>/dev/null; then
         echo "Error: cmake not found."
@@ -198,6 +301,66 @@ check_prerequisites() {
 }
 
 # ─────────────────────────────────────────────
+# Windows ARM64 cross-compile
+# ─────────────────────────────────────────────
+build_windows_aarch64() {
+    local build_dir="$1"
+    local sdl3_dll="${GAMEPAD_JNI_ROOT}/prebuilt/sdl/windows-aarch64/SDL3.dll"
+
+    if [ ! -f "${sdl3_dll}" ]; then
+        echo "Error: ${sdl3_dll} not found (bundled SDL3 for Windows ARM64)"
+        exit 1
+    fi
+
+    # JNI headers come from JAVA_HOME (any JDK — the win32 JNI headers are
+    # architecture neutral), or from JNI_HEADERS_DIR laid out as
+    # <dir>/jni.h + <dir>/win32/jni_md.h.
+    local jni_inc jni_inc2
+    if [ -n "${JAVA_HOME:-}" ]; then
+        jni_inc="${JAVA_HOME}/include"
+        jni_inc2="${JAVA_HOME}/include/win32"
+    else
+        jni_inc="${JNI_HEADERS_DIR}"
+        jni_inc2="${JNI_HEADERS_DIR}/win32"
+    fi
+    [ -f "${jni_inc}/jni.h" ] || { echo "Error: ${jni_inc}/jni.h not found"; exit 1; }
+    [ -f "${jni_inc2}/jni_md.h" ] || { echo "Error: ${jni_inc2}/jni_md.h not found"; exit 1; }
+    echo "  JNI headers: ${jni_inc}"
+
+    # The SDL3 DLL is passed as a link input on purpose: lld reads its export table
+    # directly, so no .dll.a/.lib import library is needed (the x86_64 one was
+    # deleted in 0e24ee3 for the same reason). -Wl,-s strips at link time — the
+    # host MinGW strip is an x86_64-only binutils build and cannot read ARM64.
+    echo "  SDL3 (ARM64): ${sdl3_dll}"
+    "${AARCH64_CC_CMD[@]}" -shared -O2 -Wl,-s \
+        -o "${build_dir}/gamepadjni.dll" \
+        "${GAMEPAD_JNI_ROOT}/src/main/c/gamepad_jni.c" \
+        -I "${GAMEPAD_JNI_ROOT}/prebuilt/sdl/include" \
+        -I "${jni_inc}" \
+        -I "${jni_inc2}" \
+        "${sdl3_dll}"
+
+    if [ ! -f "${build_dir}/gamepadjni.dll" ]; then
+        echo "Error: cross-compile produced no DLL"
+        exit 1
+    fi
+
+    # Assert the image really is ARM64 (PE machine 0xaa64). Nothing downstream
+    # checks machine type — verifyNativeSymbols only scans for exported symbol names
+    # — so a silently x86_64 build would ship and fail on the one platform it is
+    # meant for. e_lfanew lives at 0x3C; the machine field is 4 bytes into the PE
+    # signature that follows it.
+    local e_lfanew machine
+    e_lfanew=$(od -An -tu4 -j60 -N4 "${build_dir}/gamepadjni.dll" | tr -d ' \n')
+    machine=$(od -An -tx2 -j$((e_lfanew + 4)) -N2 "${build_dir}/gamepadjni.dll" | tr -d ' \n')
+    if [ "$machine" != "aa64" ]; then
+        echo "Error: built image is not ARM64 (PE machine=0x${machine}, expected 0xaa64)"
+        exit 1
+    fi
+    echo "  Verified PE machine: ARM64 (0xaa64)"
+}
+
+# ─────────────────────────────────────────────
 # Build a single architecture
 # ─────────────────────────────────────────────
 build_arch() {
@@ -208,6 +371,15 @@ build_arch() {
 
     rm -rf "${build_dir}"
     mkdir -p "${build_dir}"
+
+    # Windows ARM64 never goes through CMake: the host MinGW toolchain is
+    # x86_64-only and has no aarch64 sysroot, so the single translation unit is
+    # handed straight to the clang/lld cross compiler.
+    if [[ "$OS_NAME" == MINGW* || "$OS_NAME" == MSYS* ]] && [ "$arch" = "aarch64" ]; then
+        build_windows_aarch64 "${build_dir}"
+        echo "${arch} build complete"
+        return
+    fi
 
     local cmake_args=(
         -S "${GAMEPAD_JNI_ROOT}" -B "${build_dir}"
@@ -341,34 +513,38 @@ organize_output_linux() {
 organize_output_windows() {
     log_info "Organizing build artifacts (Windows)"
 
-    rm -rf "${INSTALL_DIR}/windows-x86_64"
-    mkdir -p "${INSTALL_DIR}/windows-x86_64"
+    local arch install_arch_dir build_dir
+    for arch in "${ARCHS[@]}"; do
+        install_arch_dir="${INSTALL_DIR}/windows-${arch}"
+        build_dir="${BUILD_ROOT}/${arch}"
 
-    local build_dir="${BUILD_ROOT}/x86_64"
+        rm -rf "${install_arch_dir}"
+        mkdir -p "${install_arch_dir}"
 
-    # Copy gamepadjni.dll
-    local dll_found=0
-    if [ -f "${build_dir}/gamepadjni.dll" ]; then
-        cp "${build_dir}/gamepadjni.dll" "${INSTALL_DIR}/windows-x86_64/"
-        echo "  Copied gamepadjni.dll"
-        dll_found=1
-    fi
-    if [ "${dll_found}" = "0" ]; then
-        find "${BUILD_ROOT}" -name "gamepadjni.dll" -type f 2>/dev/null | while read -r dll; do
-            cp "${dll}" "${INSTALL_DIR}/windows-x86_64/"
-            echo "  Found and copied: ${dll}"
-            dll_found=1
-        done
-    fi
+        if [ -f "${build_dir}/gamepadjni.dll" ]; then
+            cp "${build_dir}/gamepadjni.dll" "${install_arch_dir}/"
+            echo "  Copied ${arch}: gamepadjni.dll"
+        else
+            # Only the DLL is copied out of the build tree: the cross toolchain also
+            # drops an import library (gamepad_jni.lib) next to it, which must not
+            # reach prebuilt/jni/.
+            find "${build_dir}" -name "gamepadjni.dll" -type f 2>/dev/null | while read -r dll; do
+                cp "${dll}" "${install_arch_dir}/"
+                echo "  Found and copied: ${dll}"
+            done
+        fi
 
-    # Strip DLL to reduce size (MinGW embeds DWARF debug info)
-    if command -v strip &>/dev/null && [ -f "${INSTALL_DIR}/windows-x86_64/gamepadjni.dll" ]; then
-        local before_size after_size
-        before_size=$(wc -c < "${INSTALL_DIR}/windows-x86_64/gamepadjni.dll")
-        strip --strip-all "${INSTALL_DIR}/windows-x86_64/gamepadjni.dll"
-        after_size=$(wc -c < "${INSTALL_DIR}/windows-x86_64/gamepadjni.dll")
-        echo "  Stripped gamepadjni.dll: ${before_size} -> ${after_size} bytes"
-    fi
+        # Strip x86_64 (MinGW embeds DWARF debug info). The ARM64 artifact is
+        # already stripped at link time with -Wl,-s; the host strip is an x86_64-only
+        # binutils build and cannot process an ARM64 image.
+        if [ "$arch" != "aarch64" ] && command -v strip &>/dev/null && [ -f "${install_arch_dir}/gamepadjni.dll" ]; then
+            local before_size after_size
+            before_size=$(wc -c < "${install_arch_dir}/gamepadjni.dll")
+            strip --strip-all "${install_arch_dir}/gamepadjni.dll"
+            after_size=$(wc -c < "${install_arch_dir}/gamepadjni.dll")
+            echo "  Stripped gamepadjni.dll: ${before_size} -> ${after_size} bytes"
+        fi
+    done
 
     echo ""
     echo "Artifacts organized"
@@ -414,8 +590,17 @@ verify_output() {
             done
             ;;
         MINGW*|MSYS*)
+            # State the architecture of every Windows artifact: the ARM64 one is
+            # cross-compiled, so "what machine is this really" is worth reporting.
+            local dll
+            for dll in "${INSTALL_DIR}"/windows-*/gamepadjni.dll; do
+                [ -f "${dll}" ] || continue
+                if command -v file &>/dev/null; then
+                    echo "$(basename "$(dirname "${dll}")")/gamepadjni.dll: $(file -b "${dll}")"
+                fi
+            done
             if command -v objdump &>/dev/null && [ -f "${INSTALL_DIR}/windows-x86_64/gamepadjni.dll" ]; then
-                echo "DLL dependencies:"
+                echo "windows-x86_64 DLL dependencies:"
                 objdump -p "${INSTALL_DIR}/windows-x86_64/gamepadjni.dll" 2>/dev/null | grep "DLL Name" | sed 's/^/  /' || true
             fi
             ;;
@@ -458,6 +643,9 @@ EOF
             ;;
         MINGW*|MSYS*)
             cat <<EOF
+      ├── windows-aarch64/
+      │   ├── SDL3.dll
+      │   └── gamepadjni.dll
       └── windows-x86_64/
           ├── SDL3.dll
           └── gamepadjni.dll

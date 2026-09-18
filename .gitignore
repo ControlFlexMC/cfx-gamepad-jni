@@ -29,6 +29,11 @@ replay_pid*
 build/
 native_build/
 
+# Native build intermediates (clang/lld write a PDB and an import library next to
+# the DLL; only the DLL itself is shipped)
+prebuilt/**/*.pdb
+prebuilt/**/*.lib
+
 # Gradle
 .gradle/
 

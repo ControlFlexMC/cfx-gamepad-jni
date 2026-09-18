@@ -96,7 +96,36 @@ cmake --build . --config Release -j$(nproc)
 
 The JNI library is automatically copied to `prebuilt/jni/<platform>/` after the build. CMake auto-detects the target platform and architecture.
 
-**Cross-compiling for other platforms** must be done on the target OS (or via a cross-compilation toolchain). Repeat steps 1–2 on each platform you want to support.
+`prebuilt/build-jni.sh` wraps that build (plus the Windows ARM64 cross build) for every platform:
+
+```bash
+cd prebuilt
+./build-jni.sh                # native architecture
+./build-jni.sh --all          # every architecture this host can produce
+./build-jni.sh --arch aarch64 # cross-compile windows-aarch64 (Windows hosts)
+```
+
+#### Windows ARM64 cross-compile
+
+`windows-aarch64` is cross-compiled from an x86_64 Windows host, so it does not need an ARM64 machine. CMake cannot drive this target — the host MSYS2/MinGW toolchain is x86_64-only and ships no aarch64 sysroot — so a clang/lld cross toolchain is used instead: either [zig](https://ziglang.org) or [llvm-mingw](https://github.com/mstorsjo/llvm-mingw), whichever `build-jni.sh` finds on PATH.
+
+```bash
+# 1. Get a cross toolchain — zig is a plain zip, no installer or admin rights
+#    (unzip anywhere, put the directory on PATH)
+# 2. JNI headers: JAVA_HOME, or a headers-only directory when the host has no JDK
+#    (the win32 JNI headers are architecture neutral)
+cd prebuilt
+JNI_HEADERS_DIR=/d/toolchains/jni-headers ./build-jni.sh --arch aarch64
+```
+
+`WINDOWS_AARCH64_CC` overrides the compiler command. The script asserts the built image really is ARM64 (PE machine `0xaa64`) before installing it, because nothing else in the pipeline checks machine type — `verifyNativeSymbols` only scans for exported symbol names.
+
+Two details worth knowing when rebuilding this artifact:
+
+- SDL3 is resolved by reading the export table of `prebuilt/sdl/windows-aarch64/SDL3.dll` directly, so no ARM64 import library is stored in the repository (same reason the x86_64 `libSDL3.dll.a` was removed in `0e24ee3`).
+- The ARM64 artifact imports the UCRT (`api-ms-win-crt-*.dll`) while the x86_64 artifact — built by MSYS2 MinGW — imports `msvcrt.dll`. Both are OS components on Windows 10/11 ARM64.
+
+**Cross-compiling anything else** is done on the target OS. Repeat steps 1–2 on each platform you want to support.
 
 ### Step 3: Package the JAR
 
