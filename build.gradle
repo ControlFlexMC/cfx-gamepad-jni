@@ -132,13 +132,11 @@ def darwinOnlyMethods = {
             /Java_com_ifels_gamepadjni_GamepadJNI_(\w+)\s*\(/)
 }
 
-// Known drift that is exempted from failing the build. Each entry is a real bug
-// tracked in ControlFlex issue/gamepad-jni-stale-natives/root-cause-analysis.md;
-// delete the entry once the platform binary has been rebuilt.
-def nativeSymbolExemptions = [
-        'linux-x86_64' : ['SDL_WasInit', 'SDL_QuitSubSystem'],
-        'linux-aarch64': ['SDL_WasInit', 'SDL_QuitSubSystem'],
-]
+// Every packaged platform is now built from the current C source, so drift fails
+// the build outright. The linux-x86_64 / linux-aarch64 exemptions that tracked
+// the stale 0.10.x natives (ControlFlex
+// issue/gamepad-jni-stale-natives/root-cause-analysis.md) were removed once those
+// binaries were rebuilt.
 
 tasks.register('verifyNativeSymbols') {
     group = 'verification'
@@ -154,15 +152,15 @@ tasks.register('verifyNativeSymbols') {
         def failures = []
         int platforms = 0
 
+        // Only the per-platform install directories ship; prebuilt/jni/build is the
+        // CMake build tree (gitignored intermediates) and must not be scanned.
         def platformDirs = file('prebuilt/jni').listFiles()
-        if (platformDirs == null || platformDirs.length == 0) {
+                ?.findAll { it.isDirectory() && it.name != 'build' }
+        if (platformDirs == null || platformDirs.isEmpty()) {
             throw new GradleException('prebuilt/jni is empty — no JNI binaries to verify')
         }
 
         platformDirs.sort { it.name }.each { dir ->
-            if (!dir.isDirectory()) {
-                return
-            }
             def binary = dir.listFiles()?.find {
                 it.isFile() && (it.name.endsWith('.dll') || it.name.endsWith('.so') || it.name.endsWith('.dylib'))
             }
@@ -178,20 +176,9 @@ tasks.register('verifyNativeSymbols') {
             // over the binary is enough to detect a binary that was never rebuilt.
             def text = new String(binary.bytes, 'ISO-8859-1')
             def missing = required.findAll { m -> !text.contains(jniSymbolFor(m)) }
-            def exempt = nativeSymbolExemptions[dir.name] ?: []
-            def exemptMissing = missing.findAll { exempt.contains(it) }
-            def realMissing = missing.findAll { !exempt.contains(it) }
 
-            if (exemptMissing) {
-                logger.warn("[verifyNativeSymbols] ${dir.name}/${binary.name} is missing ${exemptMissing} " +
-                        '- known drift, exempted (rebuild this platform and drop the exemption)')
-            }
-            if (realMissing) {
-                failures << "${dir.name}/${binary.name} lacks ${realMissing.collect { jniSymbolFor(it) }}"
-            } else if (exemptMissing) {
-                logger.lifecycle("[verifyNativeSymbols] ${dir.name}/${binary.name}: OK for " +
-                        "${required.size() - exemptMissing.size()}/${required.size()} entry points " +
-                        "(${exemptMissing.size()} exempted)")
+            if (missing) {
+                failures << "${dir.name}/${binary.name} lacks ${missing.collect { jniSymbolFor(it) }}"
             } else {
                 logger.lifecycle("[verifyNativeSymbols] ${dir.name}/${binary.name}: OK " +
                         "(${required.size()} declared entry points present)")

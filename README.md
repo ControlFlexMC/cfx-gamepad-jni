@@ -26,6 +26,16 @@ This project produces a JNI library per platform. SDL3 is resolved in this order
 
 Set `-Dcfx.gamepadjni.forceBundledSdl3=true` to ignore host SDL3.
 
+How the JNI library reaches SDL3 differs per platform, and each mechanism binds to
+whichever copy is already mapped into the process — which is why the host/bundled
+choice is made by load order, not by the native binary:
+
+| Platform | Mechanism | Consequence when rebuilding |
+| -------- | --------- | --------------------------- |
+| macOS | `-undefined dynamic_lookup` | Resolved from the process image; nothing to link. |
+| Linux | `DT_NEEDED libSDL3.so.0`, matched **by SONAME** | The SDL3 you link against must keep SONAME `libSDL3.so.0`, or the host copy stops matching. `RUNPATH` is `$ORIGIN` so the bundled copy still resolves. |
+| Windows | Import by module name `SDL3.dll` | Resolved from the loaded-module list; no path or soname involved. |
+
 ### Library file names by platform
 
 | Platform | JNI Library            | SDL3 Library         |

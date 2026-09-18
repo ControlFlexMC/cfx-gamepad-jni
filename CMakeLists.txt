@@ -152,6 +152,21 @@ if(WIN32)
     )
 endif()
 
+# Linux: keep the shipped binary free of build paths. CMake would otherwise embed
+# the absolute path of prebuilt/sdl/linux-* as the build-tree RUNPATH, which is
+# wrong on every machine but this one. $ORIGIN resolves to the directory holding
+# libgamepadjni.so — the gamepad-jni JAR extracts the JNI library and, when the
+# host SDL3 is not used, libSDL3.so side by side — so the bundled copy is
+# reachable without hardcoding anything. Host SDL3 always wins: it is loaded
+# first, and already-mapped libraries satisfy the libSDL3.so.0 NEEDED entry by
+# SONAME before any filesystem search happens.
+if(UNIX AND NOT APPLE)
+    set_target_properties(gamepadjni PROPERTIES
+        BUILD_WITH_INSTALL_RPATH TRUE
+        INSTALL_RPATH "$ORIGIN"
+    )
+endif()
+
 # ─────────────────────────────────────────────
 # Install / copy to build output
 # ─────────────────────────────────────────────
