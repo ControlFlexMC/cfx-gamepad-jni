@@ -14,6 +14,10 @@
 
 # Package Files #
 *.jar
+# ...except the Gradle wrapper. gradlew/gradlew.bat and
+# gradle-wrapper.properties are committed, so the jar they need to boot must be
+# too — ignoring it left every fresh clone with a gradlew that cannot start.
+!gradle/wrapper/gradle-wrapper.jar
 *.war
 *.nar
 *.ear
