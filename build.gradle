@@ -95,3 +95,119 @@ tasks.withType(JavaCompile) {
     options.encoding = 'UTF-8'
 }
 
+// ─────────────────────────────────────────────
+// Native library / Java API consistency check
+// ─────────────────────────────────────────────
+// Every native method declared in GamepadJNI.java must have an exported entry
+// point in each packaged JNI binary. A stale binary (built before a new native
+// method was added) makes that method throw UnsatisfiedLinkError at runtime —
+// exactly what shipped in 0.10.2, where the Windows DLL predated
+// SDL_WasInit/SDL_QuitSubSystem (see ControlFlex
+// issue/gamepad-jni-stale-natives/root-cause-analysis.md).
+
+def jniSymbolFor = { String method -> 'Java_com_ifels_gamepadjni_GamepadJNI_' + method.replace('_', '_1') }
+
+def collectNativeMethods = { File sourceFile, String regex ->
+    def names = []
+    if (sourceFile.exists()) {
+        sourceFile.eachLine('ISO-8859-1') { line ->
+            def m = line =~ regex
+            if (m.find()) {
+                names << m.group(1).replace('_1', '_')
+            }
+        }
+    }
+    names
+}
+
+// Methods declared in Java: `public static native <type> name(`
+def declaredNativeMethods = {
+    collectNativeMethods(file('src/main/java/com/ifels/gamepadjni/GamepadJNI.java'),
+            /public\s+static\s+native\s+[\w\[\]<>.]+\s+(\w+)\s*\(/)
+}
+
+// Methods implemented only for macOS (src/main/c/gamepad_jni_macos.m, APPLE only)
+def darwinOnlyMethods = {
+    collectNativeMethods(file('src/main/c/gamepad_jni_macos.m'),
+            /Java_com_ifels_gamepadjni_GamepadJNI_(\w+)\s*\(/)
+}
+
+// Known drift that is exempted from failing the build. Each entry is a real bug
+// tracked in ControlFlex issue/gamepad-jni-stale-natives/root-cause-analysis.md;
+// delete the entry once the platform binary has been rebuilt.
+def nativeSymbolExemptions = [
+        'linux-x86_64' : ['SDL_WasInit', 'SDL_QuitSubSystem'],
+        'linux-aarch64': ['SDL_WasInit', 'SDL_QuitSubSystem'],
+]
+
+tasks.register('verifyNativeSymbols') {
+    group = 'verification'
+    description = 'Fails when a packaged native library lacks an entry point declared in GamepadJNI.java'
+
+    inputs.dir('prebuilt/jni')
+    inputs.file('src/main/java/com/ifels/gamepadjni/GamepadJNI.java')
+    inputs.file('src/main/c/gamepad_jni_macos.m')
+
+    doLast {
+        def allMethods = declaredNativeMethods()
+        def darwinOnly = darwinOnlyMethods()
+        def failures = []
+        int platforms = 0
+
+        def platformDirs = file('prebuilt/jni').listFiles()
+        if (platformDirs == null || platformDirs.length == 0) {
+            throw new GradleException('prebuilt/jni is empty — no JNI binaries to verify')
+        }
+
+        platformDirs.sort { it.name }.each { dir ->
+            if (!dir.isDirectory()) {
+                return
+            }
+            def binary = dir.listFiles()?.find {
+                it.isFile() && (it.name.endsWith('.dll') || it.name.endsWith('.so') || it.name.endsWith('.dylib'))
+            }
+            if (binary == null) {
+                logger.warn("[verifyNativeSymbols] ${dir.name}: no JNI binary — nothing to verify")
+                return
+            }
+            platforms++
+
+            boolean isDarwin = dir.name.startsWith('darwin')
+            def required = allMethods.findAll { m -> isDarwin || !darwinOnly.contains(m) }
+            // Symbol names live in the export table as plain ASCII, so a byte scan
+            // over the binary is enough to detect a binary that was never rebuilt.
+            def text = new String(binary.bytes, 'ISO-8859-1')
+            def missing = required.findAll { m -> !text.contains(jniSymbolFor(m)) }
+            def exempt = nativeSymbolExemptions[dir.name] ?: []
+            def exemptMissing = missing.findAll { exempt.contains(it) }
+            def realMissing = missing.findAll { !exempt.contains(it) }
+
+            if (exemptMissing) {
+                logger.warn("[verifyNativeSymbols] ${dir.name}/${binary.name} is missing ${exemptMissing} " +
+                        '- known drift, exempted (rebuild this platform and drop the exemption)')
+            }
+            if (realMissing) {
+                failures << "${dir.name}/${binary.name} lacks ${realMissing.collect { jniSymbolFor(it) }}"
+            } else if (exemptMissing) {
+                logger.lifecycle("[verifyNativeSymbols] ${dir.name}/${binary.name}: OK for " +
+                        "${required.size() - exemptMissing.size()}/${required.size()} entry points " +
+                        "(${exemptMissing.size()} exempted)")
+            } else {
+                logger.lifecycle("[verifyNativeSymbols] ${dir.name}/${binary.name}: OK " +
+                        "(${required.size()} declared entry points present)")
+            }
+        }
+
+        if (failures) {
+            throw new GradleException('Native library(s) do not match the Java API:\n  ' +
+                    failures.join('\n  ') +
+                    '\nRebuild the affected libraries (prebuilt/build-jni.sh) and re-commit them.')
+        }
+        logger.lifecycle("[verifyNativeSymbols] checked ${platforms} platform(s)")
+    }
+}
+
+tasks.named('check') { dependsOn 'verifyNativeSymbols' }
+tasks.named('jar') { dependsOn 'verifyNativeSymbols' }
+
+

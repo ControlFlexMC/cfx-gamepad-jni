@@ -9,6 +9,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Loads native libraries (SDL3 and gamepad-jni JNI) from the host process, the JAR,
@@ -82,24 +84,22 @@ final class NativeLibraryLoader {
     /**
      * Reuse SDL3 already mapped into this JVM (LWJGL) or load it from LWJGL's
      * native directory without extracting our bundled copy.
+     *
+     * <p>Launchers differ in where they put native libraries (flat, or in
+     * per-version/arch sub-directories) and in whether they pre-extract them or
+     * let LWJGL extract lazily, so discovery must not depend on one layout.</p>
      */
     private static boolean tryAdoptHostSdl3() {
-        if (isLwjglSdlClassPresent()) {
-            Path lwjglDir = firstExistingDir(
-                    System.getProperty("org.lwjgl.librarypath"),
-                    System.getProperty("org.lwjgl.librarypath.sdl"));
-            Path sdl = lwjglDir != null ? findSdl3File(lwjglDir) : null;
-            if (sdl != null) {
-                // ControlFlex initializes before Minecraft creates the window, so SDL3
-                // is not mapped yet. Load the same host file LWJGL will use — not a
-                // second copy. System.load of an already-mapped path is a no-op.
-                System.load(sdl.toString());
-                GamepadLog.info("[gamepad-jni] loaded host SDL3 from {}", sdl);
-                return true;
-            }
-            GamepadLog.info("[gamepad-jni] LWJGL SDL class present but host native not found on library path");
+        // 1) Ask LWJGL which SDL3 it uses. Authoritative, layout independent, and
+        //    it makes LWJGL load Minecraft's own SDL3 if MC has not touched SDL yet.
+        Path loaded = findLoadedLwjglSdl3();
+        if (loaded != null) {
+            System.load(loaded.toString());
+            GamepadLog.info("[gamepad-jni] loaded host SDL3 from {}", loaded);
+            return true;
         }
 
+        // 2) Explicit override directory.
         Path fromEnv = firstExistingDir(
                 System.getProperty("cfx.gamepadjni.hostSdl3Dir"),
                 System.getenv("CFX_HOST_SDL3_DIR"));
@@ -111,7 +111,79 @@ final class NativeLibraryLoader {
                 return true;
             }
         }
+
+        // 3) Library-path style directories (search recursively: natives may sit in
+        //    sub-directories such as <dir>/<lwjgl-version>/<arch>/).
+        String[] dirProps = {
+                System.getProperty("org.lwjgl.librarypath"),
+                System.getProperty("org.lwjgl.librarypath.sdl"),
+                System.getProperty("org.lwjgl.system.SharedLibraryExtractPath"),
+        };
+        for (String raw : dirProps) {
+            Path sdl = findSdl3File(firstExistingDir(raw));
+            if (sdl != null) {
+                System.load(sdl.toString());
+                GamepadLog.info("[gamepad-jni] loaded host SDL3 from {}", sdl);
+                return true;
+            }
+        }
+        for (String entry : splitPathList(System.getProperty("java.library.path"))) {
+            Path sdl = findSdl3File(firstExistingDir(entry));
+            if (sdl != null) {
+                System.load(sdl.toString());
+                GamepadLog.info("[gamepad-jni] loaded host SDL3 from {}", sdl);
+                return true;
+            }
+        }
+
+        if (isLwjglSdlClassPresent()) {
+            GamepadLog.info("[gamepad-jni] LWJGL SDL class present but host native not found on library path");
+        }
         return false;
+    }
+
+    /**
+     * Ask LWJGL for the SDL3 shared library it uses. Invoking {@code getLibrary()}
+     * loads the host native when it is not mapped yet; the JNI library then binds to
+     * that same module by name, so we never pull in a second SDL3 copy.
+     *
+     * @return path of the host SDL3, or {@code null} when LWJGL is unavailable
+     */
+    private static Path findLoadedLwjglSdl3() {
+        try {
+            ClassLoader cl = NativeLibraryLoader.class.getClassLoader();
+            Class<?> sdlClass = Class.forName("org.lwjgl.sdl.SDL", false, cl);
+            Object library = sdlClass.getMethod("getLibrary").invoke(null);
+            if (library == null) {
+                return null;
+            }
+            Class<?> sharedLibrary = Class.forName("org.lwjgl.system.SharedLibrary", false, cl);
+            Object raw = sharedLibrary.getMethod("getPath").invoke(library);
+            if (raw instanceof String && !((String) raw).isEmpty()) {
+                Path p = Paths.get((String) raw);
+                if (Files.isRegularFile(p)) {
+                    return p;
+                }
+            }
+        } catch (Throwable ignored) {
+            // LWJGL absent, or natives unavailable -> fall back to directory search
+        }
+        return null;
+    }
+
+    /** Split a {@code File.pathSeparator} separated list, skipping blanks. */
+    private static String[] splitPathList(String value) {
+        if (value == null || value.isEmpty()) {
+            return new String[0];
+        }
+        String[] parts = value.split(java.util.regex.Pattern.quote(File.pathSeparator));
+        List<String> result = new ArrayList<>();
+        for (String part : parts) {
+            if (!part.trim().isEmpty()) {
+                result.add(part.trim());
+            }
+        }
+        return result.toArray(new String[0]);
     }
 
     private static boolean isLwjglSdlClassPresent() {
@@ -135,7 +207,20 @@ final class NativeLibraryLoader {
         return null;
     }
 
+    /**
+     * Locate the SDL3 shared library inside {@code dir} (or a bounded number of
+     * sub-directories below it).
+     */
     private static Path findSdl3File(Path dir) {
+        if (dir == null) {
+            return null;
+        }
+        Path direct = findSdl3FileShallow(dir);
+        return direct != null ? direct : findSdl3FileRecursive(dir, 4);
+    }
+
+    /** Look for the SDL3 library directly inside {@code dir}. */
+    private static Path findSdl3FileShallow(Path dir) {
         String primary = getSDL3FileName();
         Path exact = dir.resolve(primary);
         if (Files.isRegularFile(exact)) {
@@ -166,6 +251,49 @@ final class NativeLibraryLoader {
         } catch (IOException ignored) {
         }
         return null;
+    }
+
+    /**
+     * Bounded recursive search for the SDL3 library. Launchers may nest natives
+     * (for example {@code <library path>/<lwjgl version>/<arch>/SDL3.dll}), which a
+     * flat directory listing misses.
+     */
+    private static Path findSdl3FileRecursive(Path dir, int depth) {
+        if (depth <= 0) {
+            return null;
+        }
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir)) {
+            List<Path> subDirs = new ArrayList<>();
+            for (Path p : stream) {
+                if (Files.isDirectory(p)) {
+                    subDirs.add(p);
+                } else if (isSdl3LibraryName(p.getFileName().toString())) {
+                    return p;
+                }
+            }
+            for (Path sub : subDirs) {
+                Path hit = findSdl3FileShallow(sub);
+                if (hit != null) {
+                    return hit;
+                }
+                hit = findSdl3FileRecursive(sub, depth - 1);
+                if (hit != null) {
+                    return hit;
+                }
+            }
+        } catch (IOException ignored) {
+        }
+        return null;
+    }
+
+    /** Whether a file name looks like the SDL3 shared library. */
+    private static boolean isSdl3LibraryName(String name) {
+        if (name == null || !name.contains("SDL3")) {
+            return false;
+        }
+        String lower = name.toLowerCase();
+        return lower.endsWith(".dll") || lower.endsWith(".dylib")
+                || lower.endsWith(".so") || lower.contains(".so.");
     }
 
     /**
