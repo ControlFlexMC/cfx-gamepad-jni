@@ -150,12 +150,13 @@ def darwinOnlyMethods = {
 // issue/gamepad-jni-stale-natives/root-cause-analysis.md) were removed once those
 // binaries were rebuilt.
 //
-// SDL_GetVersion is implemented in gamepad_jni.c and shipped in the Android
-// natives, but the committed desktop binaries predate that binding. Java callers
-// already catch UnsatisfiedLinkError. Drop this exemption when desktop natives
-// are rebuilt.
-
-def desktopPendingRebuild = ['SDL_GetVersion']
+// SDL_GetVersion is in C and in the Android + Darwin natives. Linux/Windows
+// binaries have not been rebuilt yet; Java callers already catch
+// UnsatisfiedLinkError. Drop this list when those natives are rebuilt.
+def getVersionPendingPlatforms = [
+        'linux-x86_64', 'linux-aarch64',
+        'windows-x86_64', 'windows-aarch64',
+] as Set
 
 tasks.register('verifyNativeSymbols') {
     group = 'verification'
@@ -190,10 +191,9 @@ tasks.register('verifyNativeSymbols') {
             platforms++
 
             boolean isDarwin = dir.name.startsWith('darwin')
-            boolean isAndroid = dir.name.startsWith('android')
             def required = allMethods.findAll { m ->
                 (isDarwin || !darwinOnly.contains(m)) &&
-                        (isAndroid || !desktopPendingRebuild.contains(m))
+                        !(m == 'SDL_GetVersion' && getVersionPendingPlatforms.contains(dir.name))
             }
             // Symbol names live in the export table as plain ASCII, so a byte scan
             // over the binary is enough to detect a binary that was never rebuilt.
