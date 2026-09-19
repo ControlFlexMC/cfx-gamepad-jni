@@ -18,7 +18,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * GamepadManager mgr = GamepadManager.getInstance();
  *
  * // Initialize SDL and load native libraries
- * if (!mgr.initialize()) {
+ * if (!mgr.initialize(Sdl3Source.HOST)) {
  *     System.err.println("Failed to initialize SDL3");
  *     return;
  * }
@@ -89,21 +89,24 @@ public class GamepadManager {
      * Initialize SDL3 and load native libraries.
      *
      * <p>This must be called before any other gamepad operations.
-     * It loads the JNI native library (and SDL3 only when the host process does
-     * not already provide one), then initializes the SDL3 gamepad subsystem
-     * with {@code SDL_InitSubSystem} so a host such as Minecraft 26.3 can keep
-     * its own video SDL instance.</p>
+     * On desktop, {@code sdl3} selects host/LWJGL SDL3 or the copy bundled in
+     * this JAR — the two are exclusive, with no fallback. On Android the argument
+     * is ignored and the launcher APK's {@code libSDL3.so} is always used.</p>
      *
+     * <p>The gamepad subsystem is started with {@code SDL_InitSubSystem} so a host
+     * such as Minecraft 26.3 or an Android launcher can keep its own video SDL
+     * instance.</p>
+     *
+     * @param sdl3 desktop SDL3 source; ignored on Android
      * @return true on success, false on failure
      */
-    public boolean initialize() {
+    public boolean initialize(Sdl3Source sdl3) {
         if (initialized) {
             return true;
         }
 
         try {
-            // Load the JNI native library
-            NativeLibraryLoader.load();
+            NativeLibraryLoader.load(sdl3);
 
             // macOS driver strategy:
             // - MFI (GCController): ENABLED - only way to discover Bluetooth gamepads

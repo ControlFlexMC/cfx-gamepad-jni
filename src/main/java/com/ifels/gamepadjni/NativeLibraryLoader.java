@@ -16,22 +16,15 @@ import java.util.List;
  * Loads native libraries (SDL3 and gamepad-jni JNI) from the host process, the JAR,
  * or the filesystem.
  *
- * <p>Desktop loading strategy for SDL3:</p>
- * <ol>
- *   <li>Prefer Minecraft/LWJGL's SDL3 from {@code org.lwjgl.librarypath}
- *       ({@code libSDL3.dylib} / {@code libSDL3.so} / {@code SDL3.dll}).
- *       {@code System.load} that host file so JNI shares the same mapping;
- *       never extract or load the bundled SDL3 in that case.</li>
- *   <li>Otherwise load from {@code org.lwjgl.librarypath}, {@code java.library.path},
- *       or an extracted bundled native.</li>
- * </ol>
+ * <p>Desktop: the caller chooses {@link Sdl3Source#HOST} (Minecraft/LWJGL SDL3
+ * already in this JVM) or {@link Sdl3Source#BUNDLED} (the copy inside this JAR).
+ * The two are exclusive — HOST does not fall back to BUNDLED.</p>
  *
- * <p>Android uses a separate chain: SDL3 comes from the launcher APK, and only
- * {@code libgamepadjni.so} is extracted from the JAR.</p>
+ * <p>Android always loads the launcher APK's {@code libSDL3.so} and only extracts
+ * {@code libgamepadjni.so} from the JAR. The {@link Sdl3Source} argument is
+ * ignored.</p>
  *
- * <p>The JNI library is always extracted/loaded after SDL3 is available in the
- * process. Set {@code cfx.gamepadjni.forceBundledSdl3=true} to skip host sharing
- * on desktop.</p>
+ * <p>The JNI library is always loaded after SDL3 is available in the process.</p>
  */
 final class NativeLibraryLoader {
 
@@ -55,28 +48,39 @@ final class NativeLibraryLoader {
     /**
      * Load both the SDL3 shared library and the JNI native library.
      *
-     * <p>This is called automatically by {@link GamepadManager#initialize()}.</p>
+     * <p>This is called automatically by {@link GamepadManager#initialize}.</p>
      *
+     * @param source desktop choice of host vs bundled SDL3; ignored on Android
      * @throws UnsatisfiedLinkError if libraries cannot be loaded
+     * @throws NullPointerException if {@code source} is null
      */
-    static void load() {
+    static void load(Sdl3Source source) {
         if (loaded) return;
 
         synchronized (NativeLibraryLoader.class) {
             if (loaded) return;
 
-            if (AndroidPlatform.isAndroid()) {
-                loadAndroid();
-            } else {
-                loadDesktop();
+            Sdl3Source.LoadKind kind = Sdl3Source.resolveLoadKind(
+                    AndroidPlatform.isAndroid(), source);
+            switch (kind) {
+                case LAUNCHER:
+                    hostSdl3 = true;
+                    GamepadLog.info("[gamepad-jni] Android: using launcher libSDL3 (Sdl3Source.{} ignored)",
+                            source);
+                    loadAndroid();
+                    break;
+                case HOST:
+                    loadDesktopHost();
+                    break;
+                case BUNDLED:
+                    loadDesktopBundled();
+                    break;
+                default:
+                    throw new IllegalStateException("unknown SDL3 load kind: " + kind);
             }
 
             loaded = true;
         }
-    }
-
-    private static boolean forceBundledSdl3() {
-        return Boolean.parseBoolean(System.getProperty("cfx.gamepadjni.forceBundledSdl3", "false"));
     }
 
     /**
@@ -295,20 +299,29 @@ final class NativeLibraryLoader {
     }
 
     /**
-     * Desktop chain: prefer a host/LWJGL SDL3, otherwise extract SDL3 and the
-     * JNI library from {@code native/<platform>/} in the classpath.
+     * Desktop HOST: share Minecraft/LWJGL SDL3. Fail if it is not in this process.
      */
-    private static void loadDesktop() {
-        boolean adoptHost = !forceBundledSdl3() && tryAdoptHostSdl3();
-        hostSdl3 = adoptHost;
-
-        Path nativeDir = findNativeDir(adoptHost);
-        if (!adoptHost) {
-            loadSDL3(nativeDir);
-        } else {
-            GamepadLog.info("[gamepad-jni] using host SDL3 (Minecraft/LWJGL); bundled SDL3 not loaded");
+    private static void loadDesktopHost() {
+        if (!tryAdoptHostSdl3()) {
+            throw new UnsatisfiedLinkError(
+                    "Sdl3Source.HOST requested but host SDL3 was not found. "
+                            + "Looked at LWJGL SDL.getLibrary(), cfx.gamepadjni.hostSdl3Dir / "
+                            + "CFX_HOST_SDL3_DIR, org.lwjgl.librarypath, and java.library.path. "
+                            + "Pass Sdl3Source.BUNDLED to use the copy inside the gamepad-jni JAR.");
         }
+        hostSdl3 = true;
+        GamepadLog.info("[gamepad-jni] using host SDL3 (Minecraft/LWJGL); bundled SDL3 not loaded");
+        loadJNILibrary(findNativeDir(true));
+    }
 
+    /**
+     * Desktop BUNDLED: extract SDL3 and the JNI library from the JAR.
+     * Host / LWJGL SDL3 is never opened.
+     */
+    private static void loadDesktopBundled() {
+        hostSdl3 = false;
+        Path nativeDir = findNativeDir(false);
+        loadSDL3(nativeDir);
         loadJNILibrary(nativeDir);
     }
 

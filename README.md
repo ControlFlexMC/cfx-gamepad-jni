@@ -15,21 +15,25 @@ Control Flex uses this library to provide cross-platform gamepad support (Xbox, 
 
 ## Native Libraries
 
-This project produces a JNI library per platform. SDL3 is resolved in this order:
+This project produces a JNI library per platform. The caller chooses which SDL3
+to bind to when calling `GamepadManager.initialize(Sdl3Source)`:
 
-1. **Host SDL3** — Minecraft 26.3 / LWJGL already loaded `libSDL3` into the process. The JNI library binds to that copy (`SDL_InitSubSystem` / `SDL_QuitSubSystem`; never `SDL_Quit()` while sharing).
-2. **Bundled fallback** — the same LWJGL 3.4.3 SDL3 binaries Minecraft 26.3 ships, stored under `prebuilt/sdl/<platform>/`.
+| `Sdl3Source` | Where SDL3 comes from | When to use |
+| --- | --- | --- |
+| `HOST` | Minecraft / LWJGL SDL3 already in this JVM | Desktop Minecraft 26.3+ |
+| `BUNDLED` | `prebuilt/sdl/<platform>/` inside this JAR | Desktop when the host has no SDL3 |
+
+The two desktop choices are exclusive: `HOST` fails if that copy is not found;
+it does not fall back to `BUNDLED`. On Android the argument is ignored and the
+launcher APK's `libSDL3.so` is always used.
 
 | Library | Source | Description |
 | --- | --- | --- |
 | `libgamepadjni.so` / `.dylib` / `.dll` | `src/main/c/` (CMake) | JNI bridge to the SDL3 gamepad API |
-| `libSDL3.so` / `libSDL3.0.dylib` / `SDL3.dll` | LWJGL 3.4.3 (Minecraft 26.3) | Fallback SDL3 when no host copy is present |
+| `libSDL3.so` / `libSDL3.0.dylib` / `SDL3.dll` | LWJGL 3.4.3 (Minecraft 26.3) | Bundled SDL3 used only with `Sdl3Source.BUNDLED` |
 
-Set `-Dcfx.gamepadjni.forceBundledSdl3=true` to ignore host SDL3.
-
-How the JNI library reaches SDL3 differs per platform, and each mechanism binds to
-whichever copy is already mapped into the process — which is why the host/bundled
-choice is made by load order, not by the native binary:
+How the JNI library reaches SDL3 differs per platform. Each mechanism binds to
+whichever copy is already mapped into the process:
 
 | Platform | Mechanism | Consequence when rebuilding |
 | -------- | --------- | --------------------------- |
@@ -91,8 +95,8 @@ in a second JVM inside the same app process, and they ship `libSDL3.so` in the A
 ART runtime. That glue is what SDL's Android joystick driver talks to, so a copy of
 SDL3 we built ourselves could never enumerate a gamepad. We therefore:
 
-- load the launcher's SDL3 - `$POJAV_NATIVEDIR/libSDL3.so`, falling back to
-  `System.loadLibrary("SDL3")` - instead of shipping our own;
+- ignore `Sdl3Source` and always load the launcher's SDL3 —
+  `$POJAV_NATIVEDIR/libSDL3.so`, falling back to `System.loadLibrary("SDL3")`;
 - ship only our own `libgamepadjni.so` under `native/android-<abi>/`;
 - call `SDL_InitSubSystem` rather than `SDL_Init`, because the launchers' bytehook
   patches that specific symbol and only then installs the glue;
@@ -248,6 +252,7 @@ cfx-gamepad-jni/
 │       ├── Gamepad.java            # Per-gamepad state: axes, buttons, rumble, LED, sensors
 │       ├── GamepadJNI.java         # Native method declarations
 │       ├── NativeLibraryLoader.java # Extracts and loads natives from JAR
+│       ├── Sdl3Source.java         # HOST vs BUNDLED (desktop); ignored on Android
 │       ├── GamepadAxis.java        # Axis enum (LEFTX, LEFTY, TRIGGERS, etc.)
 │       ├── GamepadButton.java      # Button enum (SOUTH, EAST, DPAD, etc.)
 │       └── ...                     # Supporting enums and types
