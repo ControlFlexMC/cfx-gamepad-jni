@@ -80,7 +80,7 @@ gamepad-jni-<version>.jar
         └── gamepadjni.dll
 ```
 
-`verifyJarContents` (part of `check`) asserts these eight directories are present
+`verifyJarContents` (part of `check`) asserts these native directories are present
 and that no Android `libSDL3.so` is ever packaged.
 
 ### Android

@@ -221,7 +221,7 @@ endif()
 # reachable without hardcoding anything. Host SDL3 always wins: it is loaded
 # first, and already-mapped libraries satisfy the libSDL3.so.0 NEEDED entry by
 # SONAME before any filesystem search happens.
-if(UNIX AND NOT APPLE)
+if(UNIX AND NOT APPLE AND NOT ANDROID)
     set_target_properties(gamepadjni PROPERTIES
         BUILD_WITH_INSTALL_RPATH TRUE
         INSTALL_RPATH "$ORIGIN"
