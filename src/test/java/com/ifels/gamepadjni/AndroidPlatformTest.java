@@ -8,73 +8,49 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * AndroidPlatform 的纯函数测试。
+ * Pure-function tests for AndroidPlatform.
  *
- * <p>判定与映射都做成接受显式入参的静态方法，因此无需模拟环境变量或进程属性。</p>
+ * <p>Detection and mapping are static methods that take explicit arguments, so
+ * tests do not mock environment variables or process properties.</p>
  */
 class AndroidPlatformTest {
 
-    private static final String HOTSPOT = "OpenJDK 64-Bit Server VM";
-
-    // ── detect()：四条信号任意一条命中即 Android ──────────────────────────
+    // ── detect(): os.version must start with android- (case-insensitive) ──
 
     @Test
-    void detectPojavNativeDirSignal() {
-        assertTrue(AndroidPlatform.detect(
-                "Linux", "6.1.0", HOTSPOT, "/data/app/lib/arm64", false));
+    void detectLauncherAndroidVersion() {
+        assertTrue(AndroidPlatform.detect("Android-14"));
+        assertTrue(AndroidPlatform.detect("Android-13"));
+        assertTrue(AndroidPlatform.detect("Android-10"));
     }
 
     @Test
-    void detectAndroidOsVersionSignal() {
-        assertTrue(AndroidPlatform.detect(
-                "Linux", "Android-13", HOTSPOT, null, false));
+    void detectIgnoresCaseOnOsVersionPrefix() {
+        assertTrue(AndroidPlatform.detect("android-14"));
+        assertTrue(AndroidPlatform.detect("ANDROID-14"));
+        assertTrue(AndroidPlatform.detect("AnDrOiD-8.1.0"));
     }
 
     @Test
-    void detectSystemBuildPropSignal() {
-        assertTrue(AndroidPlatform.detect(
-                "Linux", "6.1.0", HOTSPOT, null, true));
+    void detectKernelVersionIsNotAndroid() {
+        assertFalse(AndroidPlatform.detect("6.1.0"));
+        assertFalse(AndroidPlatform.detect("10.0"));
+        assertFalse(AndroidPlatform.detect("24.6.0"));
     }
 
     @Test
-    void detectDalvikVmNameSignal() {
-        assertTrue(AndroidPlatform.detect(
-                "Linux", "6.1.0", "dalvik", null, false));
-        assertTrue(AndroidPlatform.detect(
-                "Linux", "6.1.0", "Dalvik", null, false));
-    }
-
-    // ── detect()：桌面必须零误判 ────────────────────────────────────────
-
-    @Test
-    void detectDesktopLinuxIsNotAndroid() {
-        assertFalse(AndroidPlatform.detect(
-                "Linux", "6.1.0", HOTSPOT, null, false));
+    void detectAndroidPrefixWithoutHyphenIsNotAndroid() {
+        assertFalse(AndroidPlatform.detect("Android"));
+        assertFalse(AndroidPlatform.detect("Android14"));
     }
 
     @Test
-    void detectDesktopMacIsNotAndroid() {
-        assertFalse(AndroidPlatform.detect(
-                "Mac OS X", "14.5", HOTSPOT, null, false));
+    void detectNullOrEmptyIsNotAndroid() {
+        assertFalse(AndroidPlatform.detect(null));
+        assertFalse(AndroidPlatform.detect(""));
     }
 
-    @Test
-    void detectDesktopWindowsIsNotAndroid() {
-        assertFalse(AndroidPlatform.detect(
-                "Windows 11", "10.0", HOTSPOT, null, false));
-    }
-
-    @Test
-    void detectEmptyPropertiesIsNotAndroid() {
-        assertFalse(AndroidPlatform.detect("", "", "", null, false));
-    }
-
-    @Test
-    void detectNullVmNameIsNotAndroid() {
-        assertFalse(AndroidPlatform.detect("Linux", "6.1.0", null, null, false));
-    }
-
-    // ── nativePlatformDir()：读 os.arch，逐个别名验证 ────────────────────
+    // ── nativePlatformDir(): read os.arch, check each alias ───────────────
 
     @Test
     void nativePlatformDirMapsAliases() {
@@ -121,7 +97,7 @@ class AndroidPlatformTest {
         assertEquals(expected, dirForArch(arch), "os.arch=" + arch);
     }
 
-    /** 临时改写 os.arch 并还原，避免测试间互相污染。 */
+    /** Temporarily override os.arch and restore it so tests do not leak. */
     private static String dirForArch(String arch) {
         String saved = System.getProperty("os.arch");
         try {

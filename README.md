@@ -89,11 +89,13 @@ and that no Android `libSDL3.so` is ever packaged.
 
 ### Android
 
-Android launchers (Amethyst, Zalith Launcher 2, FoldCraftLauncher) run Minecraft
+Android launchers (FCL, ZalithLauncher2, Mojo `v3_openjdk`, Amethyst) run Minecraft
 in a second JVM inside the same app process, and they ship `libSDL3.so` in the APK
 **together with SDL's Java glue** (`org.libsdl.app.*`), which they install into the
 ART runtime. That glue is what SDL's Android joystick driver talks to, so a copy of
-SDL3 we built ourselves could never enumerate a gamepad. We therefore:
+SDL3 we built ourselves could never enumerate a gamepad.
+Detection is `os.version` starting with `Android-` (case-insensitive). `os.name` is logged only.
+We therefore:
 
 - ignore `Sdl3Source` and always load the launcher's SDL3 —
   `$POJAV_NATIVEDIR/libSDL3.so`, falling back to `System.loadLibrary("SDL3")`;
