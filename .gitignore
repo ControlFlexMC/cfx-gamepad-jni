@@ -46,6 +46,12 @@ prebuilt/**/*.lib
 *.iml
 out/
 
-# Android link-time SDL3 (re-downloadable, never packaged)
+# Local superpowers brainstorm/session artifacts
+.superpowers/
+
+# Android link-time SDL (re-downloadable, never packaged)
 prebuilt/link-only/
 prebuilt/jni/build-android/
+
+# SDL trimmed-build cmake cache
+prebuilt/sdl/build/

@@ -4,18 +4,22 @@
 # Video, audio, rendering etc. are all disabled. No windowing backends needed.
 # Unified: macOS, Linux, Windows (MSYS2 MinGW64)
 #
-# Build artifacts:
+# Build artifacts (not packaged into the JAR):
 #   macOS:
-#     prebuilt/sdl/darwin-aarch64/libSDL3.0.dylib   - Apple Silicon
-#     prebuilt/sdl/darwin-x86_64/libSDL3.0.dylib    - Intel Mac
+#     prebuilt/sdl/trimmed/darwin-aarch64/libSDL3.0.dylib
+#     prebuilt/sdl/trimmed/darwin-x86_64/libSDL3.0.dylib
 #   Linux:
-#     prebuilt/sdl/linux-x86_64/libSDL3.so           - Linux x64
-#     prebuilt/sdl/linux-aarch64/libSDL3.so          - Linux ARM64
+#     prebuilt/sdl/trimmed/linux-x86_64/libSDL3.so
+#     prebuilt/sdl/trimmed/linux-aarch64/libSDL3.so
 #   Windows:
-#     prebuilt/sdl/windows-x86_64/SDL3.dll           - Windows x64
-#     prebuilt/sdl/windows-x86_64/lib/libSDL3.dll.a  - Import library (for linking)
-#   Common:
-#     prebuilt/sdl/include/SDL3/                     - Header files
+#     prebuilt/sdl/trimmed/windows-x86_64/SDL3.dll
+#     prebuilt/sdl/trimmed/windows-x86_64/lib/libSDL3.dll.a
+#
+# SDL3 headers used to compile the JNI library stay at:
+#     prebuilt/sdl/include/SDL3/
+# This script does not overwrite them.
+#
+# Bundled JAR SDL3 is taken from prebuilt/sdl/lwjgl-sdl-3.4.3/, not from here.
 #
 # Usage:
 #   All platforms:
@@ -45,7 +49,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SDL_SOURCE_DIR="${SCRIPT_DIR}/../third_party/SDL"
 BUILD_ROOT="${SCRIPT_DIR}/sdl/build"
-INSTALL_DIR="${SCRIPT_DIR}/sdl"
+INSTALL_DIR="${SCRIPT_DIR}/sdl/trimmed"
+HEADERS_DIR="${SCRIPT_DIR}/sdl/include"
 
 # ─────────────────────────────────────────────
 # OS detection
@@ -402,10 +407,9 @@ organize_output_macos() {
 
     log_info "Organizing build artifacts (macOS)"
 
-    # Clean old artifact directories (keep build/ cache)
+    # Clean old artifact directories (keep cmake cache in prebuilt/sdl/build)
     rm -rf "${INSTALL_DIR}/darwin-aarch64"
     rm -rf "${INSTALL_DIR}/darwin-x86_64"
-    rm -rf "${INSTALL_DIR}/include"
 
     # Separate by architecture (for JAR packaging)
     mkdir -p "${INSTALL_DIR}/darwin-aarch64"
@@ -425,14 +429,7 @@ organize_output_macos() {
         fi
     done
 
-    # Copy headers (arm64 and x86_64 headers are identical, pick either)
-    if [ -d "${arm64_install}/include" ]; then
-        cp -R "${arm64_install}/include" "${INSTALL_DIR}/"
-    elif [ -d "${x86_64_install}/include" ]; then
-        cp -R "${x86_64_install}/include" "${INSTALL_DIR}/"
-    else
-        echo "  ⚠️  Header directory not found, skipping"
-    fi
+    # Headers stay in prebuilt/sdl/include; this script does not copy them.
 
     echo ""
     echo "✅ Artifact organization complete"
@@ -447,7 +444,6 @@ organize_output_linux() {
     # Clean old artifact directories
     rm -rf "${INSTALL_DIR}/linux-x86_64"
     rm -rf "${INSTALL_DIR}/linux-aarch64"
-    rm -rf "${INSTALL_DIR}/include"
 
     mkdir -p "${INSTALL_DIR}/linux-x86_64"
     mkdir -p "${INSTALL_DIR}/linux-aarch64"
@@ -488,17 +484,7 @@ organize_output_linux() {
         done
     done
 
-    # Copy headers (identical for both architectures, use x86_64 if available)
-    local header_source="${BUILD_ROOT}/x86_64-install"
-    if [ -d "${header_source}/include" ]; then
-        cp -R "${header_source}/include" "${INSTALL_DIR}/"
-        echo "  ✅ Copied headers"
-    elif [ -d "${BUILD_ROOT}/aarch64-install/include" ]; then
-        cp -R "${BUILD_ROOT}/aarch64-install/include" "${INSTALL_DIR}/"
-        echo "  ✅ Copied headers"
-    else
-        echo "  ⚠️  Header directory not found, skipping"
-    fi
+    # Headers stay in prebuilt/sdl/include; this script does not copy them.
 
     echo ""
     echo "✅ Artifact organization complete"
@@ -514,7 +500,6 @@ organize_output_windows() {
 
     # Clean old artifact directories
     rm -rf "${INSTALL_DIR}/windows-x86_64"
-    rm -rf "${INSTALL_DIR}/include"
 
     mkdir -p "${INSTALL_DIR}/windows-x86_64"
     mkdir -p "${INSTALL_DIR}/windows-x86_64/lib"
@@ -556,13 +541,7 @@ organize_output_windows() {
         echo "  ✅ Copied SDL3.dll.a -> windows-x86_64/lib/"
     fi
 
-    # Copy headers
-    if [ -d "${staging_dir}/include" ]; then
-        cp -R "${staging_dir}/include" "${INSTALL_DIR}/"
-        echo "  ✅ Copied headers"
-    else
-        echo "  ⚠️  Header directory not found"
-    fi
+    # Headers stay in prebuilt/sdl/include; this script does not copy them.
 
     echo ""
     echo "✅ Artifact organization complete"
@@ -598,10 +577,10 @@ verify_output_macos() {
     echo ""
 
     # Check headers
-    if [ -d "${INSTALL_DIR}/include/SDL3" ]; then
+    if [ -d "${HEADERS_DIR}/SDL3" ]; then
         local header_count
-        header_count=$(find "${INSTALL_DIR}/include/SDL3" -name "*.h" | wc -l | tr -d ' ')
-        echo "📄 Header files: ${header_count} (${INSTALL_DIR}/include/SDL3/)"
+        header_count=$(find "${HEADERS_DIR}/SDL3" -name "*.h" | wc -l | tr -d ' ')
+        echo "📄 Header files: ${header_count} (${HEADERS_DIR}/SDL3/) — not overwritten by this build"
     fi
 }
 
@@ -644,10 +623,10 @@ verify_output_linux() {
     echo ""
 
     # Check headers
-    if [ -d "${INSTALL_DIR}/include/SDL3" ]; then
+    if [ -d "${HEADERS_DIR}/SDL3" ]; then
         local header_count
-        header_count=$(find "${INSTALL_DIR}/include/SDL3" -name "*.h" | wc -l | tr -d ' ')
-        echo "📄 Header files: ${header_count} (${INSTALL_DIR}/include/SDL3/)"
+        header_count=$(find "${HEADERS_DIR}/SDL3" -name "*.h" | wc -l | tr -d ' ')
+        echo "📄 Header files: ${header_count} (${HEADERS_DIR}/SDL3/) — not overwritten by this build"
     fi
 }
 
@@ -686,10 +665,10 @@ verify_output_windows() {
     echo ""
 
     # Check headers
-    if [ -d "${INSTALL_DIR}/include/SDL3" ]; then
+    if [ -d "${HEADERS_DIR}/SDL3" ]; then
         local header_count
-        header_count=$(find "${INSTALL_DIR}/include/SDL3" -name "*.h" | wc -l | tr -d ' ')
-        echo "📄 Header files: ${header_count} (${INSTALL_DIR}/include/SDL3/)"
+        header_count=$(find "${HEADERS_DIR}/SDL3" -name "*.h" | wc -l | tr -d ' ')
+        echo "📄 Header files: ${header_count} (${HEADERS_DIR}/SDL3/) — not overwritten by this build"
     fi
 }
 
@@ -700,19 +679,14 @@ print_usage_macos() {
     log_info "Integration instructions (macOS)"
 
     cat <<EOF
-JAR packaging structure (separated by architecture):
+Local trimmed SDL3 (not packaged). JAR SDL3 comes from
+prebuilt/sdl/lwjgl-sdl-3.4.3/.
 
-  your-project.jar
-  └── native/
-      ├── darwin-aarch64/
-      │   └── libSDL3.0.dylib    ← Apple Silicon (M1/M2/M3/...)
-      └── darwin-x86_64/
-          └── libSDL3.0.dylib    ← Intel Mac
+  ${INSTALL_DIR}/
+      ├── darwin-aarch64/libSDL3.0.dylib
+      └── darwin-x86_64/libSDL3.0.dylib
 
-Build artifact locations:
-  arm64:    ${INSTALL_DIR}/darwin-aarch64/
-  x86_64:   ${INSTALL_DIR}/darwin-x86_64/
-  Headers:  ${INSTALL_DIR}/include/SDL3/
+Headers (unchanged): ${HEADERS_DIR}/SDL3/
 
 Trimmed features: Video, Audio, GPU, Render, Camera, Haptic, Power, Dialog, Tray
                   OpenGL, Vulkan, Metal, D3D and all windowing backends
@@ -728,19 +702,14 @@ print_usage_linux() {
     log_info "Integration instructions (Linux)"
 
     cat <<EOF
-JAR packaging structure (separated by architecture):
+Local trimmed SDL3 (not packaged). JAR SDL3 comes from
+prebuilt/sdl/lwjgl-sdl-3.4.3/.
 
-  your-project.jar
-  └── native/
-      ├── linux-x86_64/
-      │   └── libSDL3.so          ← Linux x64
-      └── linux-aarch64/
-          └── libSDL3.so          ← Linux ARM64
+  ${INSTALL_DIR}/
+      ├── linux-x86_64/libSDL3.so
+      └── linux-aarch64/libSDL3.so
 
-Build artifact locations:
-  x86_64:   ${INSTALL_DIR}/linux-x86_64/
-  aarch64:  ${INSTALL_DIR}/linux-aarch64/
-  Headers:  ${INSTALL_DIR}/include/SDL3/
+Headers (unchanged): ${HEADERS_DIR}/SDL3/
 
 Trimmed features: Video, Audio, GPU, Render, Camera, Haptic, Power, Dialog, Tray
                   OpenGL, Vulkan, X11, Wayland and all windowing backends
@@ -756,17 +725,14 @@ print_usage_windows() {
     log_info "Integration instructions (Windows)"
 
     cat <<EOF
-JAR packaging structure:
+Local trimmed SDL3 (not packaged). JAR SDL3 comes from
+prebuilt/sdl/lwjgl-sdl-3.4.3/.
 
-  your-project.jar
-  └── native/
-      └── windows-x86_64/
-          └── SDL3.dll            ← Windows x64
+  ${INSTALL_DIR}/windows-x86_64/
+      ├── SDL3.dll
+      └── lib/                  (import library, linking only)
 
-Build artifact locations:
-  SDL3.dll:    ${INSTALL_DIR}/windows-x86_64/
-  Import lib:  ${INSTALL_DIR}/windows-x86_64/lib/   (for linking only, not needed at runtime)
-  Headers:     ${INSTALL_DIR}/include/SDL3/
+Headers (unchanged): ${HEADERS_DIR}/SDL3/
 
 Trimmed features: Video, Audio, GPU, Render, Camera, Haptic, Power, Dialog, Tray
                   OpenGL, Vulkan, D3D, DirectX and all windowing backends

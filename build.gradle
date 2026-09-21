@@ -36,8 +36,10 @@ jar {
         )
     }
 
-    // Include native libraries inside the JAR
-    from('prebuilt/sdl') {
+    // Bundled desktop SDL3 from prebuilt/sdl/lwjgl-sdl-3.4.3.
+    // Headers stay in prebuilt/sdl/include; local trimmed builds stay in
+    // prebuilt/sdl/trimmed and are not packaged.
+    from('prebuilt/sdl/lwjgl-sdl-3.4.3') {
         include 'windows-x86_64/*.dll'
         include 'windows-aarch64/*.dll'
         include 'darwin-aarch64/*.dylib'
@@ -242,11 +244,17 @@ tasks.register('verifyJarContents') {
                 'native/android-armeabi-v7a/libgamepadjni.so',
                 'native/android-x86_64/libgamepadjni.so',
                 'native/darwin-aarch64/libgamepadjni.dylib',
+                'native/darwin-aarch64/libSDL3.0.dylib',
                 'native/darwin-x86_64/libgamepadjni.dylib',
+                'native/darwin-x86_64/libSDL3.0.dylib',
                 'native/linux-x86_64/libgamepadjni.so',
+                'native/linux-x86_64/libSDL3.so',
                 'native/linux-aarch64/libgamepadjni.so',
+                'native/linux-aarch64/libSDL3.so',
                 'native/windows-x86_64/gamepadjni.dll',
+                'native/windows-x86_64/SDL3.dll',
                 'native/windows-aarch64/gamepadjni.dll',
+                'native/windows-aarch64/SDL3.dll',
         ]
         def missing = required.findAll { !entries.contains(it) }
         if (missing) {

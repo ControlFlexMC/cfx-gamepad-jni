@@ -63,12 +63,14 @@ message(STATUS "JNI include: ${JAVA_INCLUDE_PATH}")
 message(STATUS "JNI include2: ${JAVA_INCLUDE_PATH2}")
 
 # ─────────────────────────────────────────────
-# SDL3: use prebuilt from prebuilt/sdl
+# SDL3 headers: prebuilt/sdl/include (unchanged)
+# Desktop link/runtime libs: prebuilt/sdl/lwjgl-sdl-3.4.3/<platform>
+# Local trimmed builds (build-sdl3.sh) live in prebuilt/sdl/trimmed and are
+# not used for linking or packaging.
 # ─────────────────────────────────────────────
 set(SDL3_DIR "${CMAKE_SOURCE_DIR}/prebuilt/sdl")
-
-# SDL3 include directory
 set(SDL3_INCLUDE_DIR "${SDL3_DIR}/include")
+set(SDL3_LIB_ROOT "${SDL3_DIR}/lwjgl-sdl-3.4.3")
 
 # Platform-specific SDL3 library
 if(ANDROID)
@@ -76,61 +78,45 @@ if(ANDROID)
     # These files are link-time only (fetched by build-jni-android.sh) and are
     # never packaged: at runtime the launcher APK supplies libSDL3.so.
     set(SDL3_LIB_DIR "${SDL3_DIR}/../link-only/android-${ANDROID_ABI}")
-elseif(APPLE)
-    # Use CMAKE_OSX_ARCHITECTURES if set, otherwise fall back to system processor
-    if(DEFINED CMAKE_OSX_ARCHITECTURES)
-        if("${CMAKE_OSX_ARCHITECTURES}" MATCHES "arm64|aarch64")
-            set(_SDL3_ARCH_DIR "darwin-aarch64")
-        else()
-            set(_SDL3_ARCH_DIR "darwin-x86_64")
-        endif()
-    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-        set(_SDL3_ARCH_DIR "darwin-aarch64")
-    else()
-        set(_SDL3_ARCH_DIR "darwin-x86_64")
-    endif()
-    set(SDL3_LIB_DIR "${SDL3_DIR}/${_SDL3_ARCH_DIR}")
-elseif(WIN32)
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-        set(SDL3_LIB_DIR "${SDL3_DIR}/windows-aarch64")
-    else()
-        set(SDL3_LIB_DIR "${SDL3_DIR}/windows-x86_64")
-    endif()
-else()
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-        set(SDL3_LIB_DIR "${SDL3_DIR}/linux-aarch64")
-    else()
-        set(SDL3_LIB_DIR "${SDL3_DIR}/linux-x86_64")
-    endif()
-endif()
-
-# Find SDL3 library file
-# Android: name the file directly. find_library would re-root our absolute PATHS
-# under CMAKE_FIND_ROOT_PATH (the NDK sets it, in ONLY mode), so it never finds a
-# host-side link library while cross-compiling.
-# On Windows/MinGW, the import library (.dll.a) is in lib/ subdirectory.
-if(ANDROID)
     set(SDL3_LIBRARY "${SDL3_LIB_DIR}/libSDL3.so")
     if(NOT EXISTS "${SDL3_LIBRARY}")
         message(FATAL_ERROR "Android link-time SDL3 not found at ${SDL3_LIBRARY}. "
             "Run prebuilt/build-jni-android.sh to fetch it.")
     endif()
-elseif(WIN32)
-    find_library(SDL3_LIBRARY
-        NAMES SDL3 SDL3.0
-        PATHS "${SDL3_LIB_DIR}/lib" "${SDL3_LIB_DIR}"
-        NO_DEFAULT_PATH
-    )
 else()
-    find_library(SDL3_LIBRARY
-        NAMES SDL3 SDL3.0
-        PATHS "${SDL3_LIB_DIR}"
-        NO_DEFAULT_PATH
-    )
-endif()
-
-if(NOT SDL3_LIBRARY)
-    message(FATAL_ERROR "SDL3 library not found in ${SDL3_LIB_DIR}")
+    if(APPLE)
+        if(DEFINED CMAKE_OSX_ARCHITECTURES)
+            if("${CMAKE_OSX_ARCHITECTURES}" MATCHES "arm64|aarch64")
+                set(_SDL3_ARCH_DIR "darwin-aarch64")
+            else()
+                set(_SDL3_ARCH_DIR "darwin-x86_64")
+            endif()
+        elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+            set(_SDL3_ARCH_DIR "darwin-aarch64")
+        else()
+            set(_SDL3_ARCH_DIR "darwin-x86_64")
+        endif()
+        set(SDL3_LIBRARY_NAME "libSDL3.0.dylib")
+    elseif(WIN32)
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+            set(_SDL3_ARCH_DIR "windows-aarch64")
+        else()
+            set(_SDL3_ARCH_DIR "windows-x86_64")
+        endif()
+        set(SDL3_LIBRARY_NAME "SDL3.dll")
+    else()
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+            set(_SDL3_ARCH_DIR "linux-aarch64")
+        else()
+            set(_SDL3_ARCH_DIR "linux-x86_64")
+        endif()
+        set(SDL3_LIBRARY_NAME "libSDL3.so")
+    endif()
+    set(SDL3_LIB_DIR "${SDL3_LIB_ROOT}/${_SDL3_ARCH_DIR}")
+    set(SDL3_LIBRARY "${SDL3_LIB_DIR}/${SDL3_LIBRARY_NAME}")
+    if(NOT EXISTS "${SDL3_LIBRARY}")
+        message(FATAL_ERROR "SDL3 library not found at ${SDL3_LIBRARY}")
+    endif()
 endif()
 
 message(STATUS "SDL3 include: ${SDL3_INCLUDE_DIR}")
@@ -214,7 +200,7 @@ if(WIN32 AND NOT ANDROID)
 endif()
 
 # Linux: keep the shipped binary free of build paths. CMake would otherwise embed
-# the absolute path of prebuilt/sdl/linux-* as the build-tree RUNPATH, which is
+# the absolute path of prebuilt/sdl/lwjgl-sdl-3.4.3/linux-* as the build-tree RUNPATH, which is
 # wrong on every machine but this one. $ORIGIN resolves to the directory holding
 # libgamepadjni.so — the gamepad-jni JAR extracts the JNI library and, when the
 # host SDL3 is not used, libSDL3.so side by side — so the bundled copy is

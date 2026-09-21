@@ -27,10 +27,10 @@ BUILD_ROOT="${SCRIPT_DIR}/jni/build-android"
 LINK_ONLY="${SCRIPT_DIR}/link-only"
 INSTALL_DIR="${SCRIPT_DIR}/jni"
 
-# SDL3 version used only as the Android link target. Must stay aligned with what
-# the target launchers ship: Amethyst 1.1.7 / FoldCraftLauncher 1.3.3.1 /
-# Zalith Launcher 2 all carry the identical SDL-release.aar (SDL 3.4.12).
-SDL3_VERSION="3.4.12"
+# SDL3 version used only as the Android link target. Same pin as the
+# third_party/SDL submodule (official release-3.4.14). Runtime SDL3 still
+# comes from the launcher APK.
+SDL3_VERSION="3.4.14"
 
 ABIS=(arm64-v8a armeabi-v7a x86_64)
 

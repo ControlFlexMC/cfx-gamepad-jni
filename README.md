@@ -21,7 +21,7 @@ to bind to when calling `GamepadManager.initialize(Sdl3Source)`:
 | `Sdl3Source` | Where SDL3 comes from | When to use |
 | --- | --- | --- |
 | `HOST` | Minecraft / LWJGL SDL3 already in this JVM | Desktop Minecraft 26.3+ |
-| `BUNDLED` | `prebuilt/sdl/<platform>/` inside this JAR | Desktop when the host has no SDL3 |
+| `BUNDLED` | `prebuilt/sdl/lwjgl-sdl-3.4.3/<platform>/` inside this JAR | Desktop when the host has no SDL3 |
 
 The two desktop choices are exclusive: `HOST` fails if that copy is not found;
 it does not fall back to `BUNDLED`. On Android the argument is ignored and the
@@ -110,20 +110,24 @@ at another `libSDL3.so`: loading SDL3 from a different path yields a second
 instance with no launcher glue, which can never see a gamepad.
 
 Build the Android natives with `prebuilt/build-jni-android.sh` (needs the Android
-NDK); SDL3 at link time is fetched from the official `SDL3-devel-<version>-android`
+NDK); SDL3 at link time is fetched from the official `SDL3-devel-3.4.14-android`
 release into `prebuilt/link-only/`, which is gitignored and never packaged. The
 resulting `.so` files are committed, because JitPack only zips what is already in
 `prebuilt/`.
 
-### Step 1: Build the trimmed SDL3 library
+### Step 1: Build a local trimmed SDL3 (optional)
+
+JNI linking and JAR packaging use `prebuilt/sdl/lwjgl-sdl-3.4.3/`. The scripts
+below write a separate input-only SDL3 under `prebuilt/sdl/trimmed/` for local
+experimentation. They do **not** overwrite `prebuilt/sdl/include/`.
 
 ```bash
 cd prebuilt
-chmod +x build_sdl_input_only.sh
-./build_sdl_input_only.sh
+chmod +x build-sdl3.sh
+./build-sdl3.sh
 ```
 
-This produces per-platform SDL3 binaries under `prebuilt/sdl/<platform>/`, stripped down to only input subsystems (keyboard, mouse, joystick/gamepad, sensor). No audio, GPU, render, camera, or haptic subsystems are included.
+This produces per-platform SDL3 binaries under `prebuilt/sdl/trimmed/<platform>/`, stripped down to only input subsystems (keyboard, mouse, joystick/gamepad, sensor). No audio, GPU, render, camera, or haptic subsystems are included.
 
 ### Step 2: Build the JNI native library
 
@@ -164,7 +168,7 @@ JNI_HEADERS_DIR=/d/toolchains/jni-headers ./build-jni.sh --arch aarch64
 
 Two details worth knowing when rebuilding this artifact:
 
-- SDL3 is resolved by reading the export table of `prebuilt/sdl/windows-aarch64/SDL3.dll` directly, so no ARM64 import library is stored in the repository (same reason the x86_64 `libSDL3.dll.a` was removed in `0e24ee3`).
+- SDL3 is resolved by reading the export table of `prebuilt/sdl/lwjgl-sdl-3.4.3/windows-aarch64/SDL3.dll` directly, so no ARM64 import library is stored in the repository (same reason the x86_64 `libSDL3.dll.a` was removed in `0e24ee3`).
 - The ARM64 artifact imports the UCRT (`api-ms-win-crt-*.dll`) while the x86_64 artifact — built by MSYS2 MinGW — imports `msvcrt.dll`. Both are OS components on Windows 10/11 ARM64.
 
 **Cross-compiling anything else** is done on the target OS. Repeat steps 1–2 on each platform you want to support.
@@ -175,7 +179,7 @@ Two details worth knowing when rebuilding this artifact:
 ./build-snapshot.sh
 ```
 
-This runs `gradle clean jar`, which pulls native libraries from `prebuilt/sdl/` and `prebuilt/jni/` into the JAR under `native/<platform>/`.
+This runs `gradle clean jar`, which pulls native libraries from `prebuilt/sdl/lwjgl-sdl-3.4.3/` and `prebuilt/jni/` into the JAR under `native/<platform>/`.
 
 ### Overriding native library path at runtime
 
@@ -263,8 +267,11 @@ cfx-gamepad-jni/
 │   ├── build-sdl3-windows.bat         # Windows launcher for build-sdl3.sh
 │   ├── build-jni.sh                 # Script to build JNI native library (all platforms)
 │   ├── build-jni-windows.bat         # Windows launcher for build-jni.sh
-│   └── sdl/                        # Prebuilt SDL3 libraries (per platform)
-│       └── jni/                    # Prebuilt JNI libraries (per platform)
+│   ├── jni/                        # Prebuilt JNI libraries (per platform)
+│   └── sdl/
+│       ├── include/SDL3/               # SDL3 headers (JNI compile)
+│       ├── lwjgl-sdl-3.4.3/            # Bundled desktop SDL3 (JAR + link)
+│       └── trimmed/                    # Local build-sdl3.sh output
 ├── third_party/SDL/                # SDL3 source (git submodule)
 ├── CMakeLists.txt                  # CMake build for the JNI native library
 ├── build.gradle                    # Gradle build for the Java JAR
@@ -289,4 +296,7 @@ SDL3 is distributed under the ZLib license — see [LICENSE_SDL3](LICENSE_SDL3) 
 
 Copyright (C) 1997-2026 Sam Lantinga \<slouken@libsdl.org\>
 
-The SDL3 source is included as a git submodule in `third_party/SDL/` and compiled into a trimmed shared library. No modifications are made to the SDL3 source code.
+The SDL3 source is a git submodule at `third_party/SDL/`, pinned to
+[libsdl-org/SDL `release-3.4.14`](https://github.com/libsdl-org/SDL/releases/tag/release-3.4.14)
+(`147a8ee32dbf9ac02f3794964490687b6bbda1bc`). It is compiled into a trimmed
+shared library. No modifications are made to the SDL3 source code.

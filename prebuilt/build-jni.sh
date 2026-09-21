@@ -99,8 +99,8 @@ AARCH64_CC_CMD=()
 
 # Resolve the cross compiler for windows-aarch64. clang + lld is what makes this
 # viable: lld resolves SDL3 straight from the DLL's export table, so
-# prebuilt/sdl/windows-aarch64/ needs no import library (the x86_64 .dll.a was
-# deleted in 0e24ee3 for the same reason).
+# prebuilt/sdl/lwjgl-sdl-3.4.3/windows-aarch64/ needs no import library
+# (the x86_64 .dll.a was deleted in 0e24ee3 for the same reason).
 detect_windows_aarch64_cc() {
     AARCH64_CC_CMD=()
 
@@ -305,7 +305,7 @@ check_prerequisites() {
 # ─────────────────────────────────────────────
 build_windows_aarch64() {
     local build_dir="$1"
-    local sdl3_dll="${GAMEPAD_JNI_ROOT}/prebuilt/sdl/windows-aarch64/SDL3.dll"
+    local sdl3_dll="${GAMEPAD_JNI_ROOT}/prebuilt/sdl/lwjgl-sdl-3.4.3/windows-aarch64/SDL3.dll"
 
     if [ ! -f "${sdl3_dll}" ]; then
         echo "Error: ${sdl3_dll} not found (bundled SDL3 for Windows ARM64)"
