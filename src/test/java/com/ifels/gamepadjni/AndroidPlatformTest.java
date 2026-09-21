@@ -91,6 +91,11 @@ class AndroidPlatformTest {
         assertNull(AndroidPlatform.launcherSdlPath(""));
     }
 
+    @Test
+    void gamepadManagerIsAndroidMatchesAndroidPlatform() {
+        assertEquals(AndroidPlatform.isAndroid(), GamepadManager.isAndroid());
+    }
+
     // ── helpers ─────────────────────────────────────────────────────────
 
     private static void assertDir(String arch, String expected) {

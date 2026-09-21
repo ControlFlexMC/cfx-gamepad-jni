@@ -5,7 +5,7 @@ REM
 REM Prerequisites:
 REM   - MSYS2 installed at C:\msys64 with mingw-w64 toolchain
 REM   - JDK 8+ with JAVA_HOME set (or auto-detected)
-REM   - Prebuilt SDL3 in prebuilt/sdl/lwjgl-sdl-3.4.3/
+REM   - Prebuilt SDL3 in prebuilt/sdl/trimmed/
 REM   - Headers in prebuilt/sdl/include
 REM
 REM Build artifacts:

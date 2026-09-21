@@ -20,15 +20,18 @@ public final class AndroidPlatform {
 
     private static final String LAUNCHER_OS_VERSION_PREFIX = "android-";
 
-    private static final boolean ANDROID = detect(
-            System.getProperty("os.version", ""));
-
     private AndroidPlatform() {
     }
 
-    /** Whether this process is running in a game JVM provided by an Android launcher. */
+    /**
+     * Whether this process is running in a game JVM provided by an Android launcher.
+     *
+     * <p>Convenience for {@link HostPlatform#current()}{@code .isAndroid()}.
+     * Callers that will also branch on iOS should switch on
+     * {@link HostPlatform#current()}.</p>
+     */
     public static boolean isAndroid() {
-        return ANDROID;
+        return HostPlatform.current().isAndroid();
     }
 
     /**

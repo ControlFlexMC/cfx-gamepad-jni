@@ -64,13 +64,14 @@ message(STATUS "JNI include2: ${JAVA_INCLUDE_PATH2}")
 
 # ─────────────────────────────────────────────
 # SDL3 headers: prebuilt/sdl/include (unchanged)
-# Desktop link/runtime libs: prebuilt/sdl/lwjgl-sdl-3.4.3/<platform>
-# Local trimmed builds (build-sdl3.sh) live in prebuilt/sdl/trimmed and are
-# not used for linking or packaging.
+# Desktop link + bundled JAR libs: prebuilt/sdl/trimmed/<platform>
+# (joystick/gamepad-only SDL3 from build-sdl3.sh). Linking against the same
+# binaries that are packaged avoids depending on symbols only present in a
+# full LWJGL SDL. HOST still binds a superset at runtime (Minecraft 26.3).
 # ─────────────────────────────────────────────
 set(SDL3_DIR "${CMAKE_SOURCE_DIR}/prebuilt/sdl")
 set(SDL3_INCLUDE_DIR "${SDL3_DIR}/include")
-set(SDL3_LIB_ROOT "${SDL3_DIR}/lwjgl-sdl-3.4.3")
+set(SDL3_LIB_ROOT "${SDL3_DIR}/trimmed")
 
 # Platform-specific SDL3 library
 if(ANDROID)
@@ -200,7 +201,7 @@ if(WIN32 AND NOT ANDROID)
 endif()
 
 # Linux: keep the shipped binary free of build paths. CMake would otherwise embed
-# the absolute path of prebuilt/sdl/lwjgl-sdl-3.4.3/linux-* as the build-tree RUNPATH, which is
+# the absolute path of prebuilt/sdl/trimmed/linux-* as the build-tree RUNPATH, which is
 # wrong on every machine but this one. $ORIGIN resolves to the directory holding
 # libgamepadjni.so — the gamepad-jni JAR extracts the JNI library and, when the
 # host SDL3 is not used, libSDL3.so side by side — so the bundled copy is

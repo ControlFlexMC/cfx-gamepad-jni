@@ -36,10 +36,9 @@ jar {
         )
     }
 
-    // Bundled desktop SDL3 from prebuilt/sdl/lwjgl-sdl-3.4.3.
-    // Headers stay in prebuilt/sdl/include; local trimmed builds stay in
-    // prebuilt/sdl/trimmed and are not packaged.
-    from('prebuilt/sdl/lwjgl-sdl-3.4.3') {
+    // Bundled desktop SDL3 from prebuilt/sdl/trimmed (same binaries CMake links).
+    // Headers stay in prebuilt/sdl/include.
+    from('prebuilt/sdl/trimmed') {
         include 'windows-x86_64/*.dll'
         include 'windows-aarch64/*.dll'
         include 'darwin-aarch64/*.dylib'

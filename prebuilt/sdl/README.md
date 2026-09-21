@@ -6,7 +6,8 @@ bundled copy inside the JAR. Gradle does not download these natives from Maven.
 
 Minecraft 26.3+ already ships LWJGL 3.4.3 (SDL 3.4.14). Callers use
 `Sdl3Source.HOST` there. Older Minecraft still needs a copy of SDL3 in this
-JAR (`Sdl3Source.BUNDLED`). The files here are that copy.
+JAR (`Sdl3Source.BUNDLED`). That copy is the trimmed, joystick/gamepad-only
+build — not the full LWJGL SDL3.
 
 ## Layout
 
@@ -14,8 +15,8 @@ JAR (`Sdl3Source.BUNDLED`). The files here are that copy.
 prebuilt/sdl/
   README.md                 # this file
   include/SDL3/             # headers for compiling the JNI library
-  lwjgl-sdl-3.4.3/<os-arch> # LWJGL 3.4.3 SDL3: CMake link input + JAR contents
-  trimmed/<os-arch>         # local output of build-sdl3.sh (not packaged)
+  trimmed/<os-arch>         # CMake link input + JAR contents (build-sdl3.sh)
+  lwjgl-sdl-3.4.3/<os-arch> # full LWJGL 3.4.3 SDL3; not linked, not packaged
 ```
 
 `build/` under this directory is a CMake cache from `build-sdl3.sh` and is
@@ -34,11 +35,19 @@ script is not allowed to overwrite these headers.
 These headers match SDL 3.4.14 (`SDL_MAJOR_VERSION` / `SDL_MINOR_VERSION` /
 `SDL_MICRO_VERSION` in `include/SDL3/SDL_version.h`).
 
-## `lwjgl-sdl-3.4.3/`
+## `trimmed/`
 
-SDL3 shared libraries taken from LWJGL **3.4.3** (the same SDL 3.4.14 that
-Minecraft 26.3 uses). They stay in git so `./gradlew jar` and JNI rebuilds work
-offline, including on JitPack.
+Input-only SDL3 built from the `third_party/SDL` submodule (`release-3.4.14`)
+by `prebuilt/build-sdl3.sh` / `build-sdl3-windows.bat`. Video, audio, GPU,
+render, camera, and windowing backends are off; joystick/gamepad and sensor
+stay on. That is what ControlFlex actually calls, and it is about 2 MB smaller
+in the published JAR than a full LWJGL SDL3.
+
+CMake and Gradle always use this directory. Linking against the same binaries
+that are packaged means `libgamepadjni` cannot grow a dependency on a symbol
+that exists only in the full LWJGL build. `Sdl3Source.HOST` still works: the
+Minecraft/LWJGL SDL3 is a superset of these gamepad APIs, and the JNI library
+matches by SONAME / `SDL3.dll` / `dynamic_lookup`, not by file identity.
 
 | Path | File | Used by |
 |------|------|---------|
@@ -53,24 +62,18 @@ offline, including on JitPack.
 runtime `NativeLibraryLoader` extracts that path when the caller passes
 `Sdl3Source.BUNDLED`.
 
-Do not point CMake or Gradle at `trimmed/`. Linking and packaging always use
-this directory.
+Refreshing the binaries: run `prebuilt/build-sdl3.sh` (or
+`build-sdl3-windows.bat`) and commit the new files under `trimmed/`. Keep the
+file names in the table above.
 
-Refreshing the binaries: copy the SDL3 shared library out of the matching
-LWJGL artifact (`org.lwjgl:lwjgl-sdl:3.4.3` with classifier
-`natives-macos-arm64`, `natives-macos`, `natives-linux`, `natives-linux-arm64`,
-`natives-windows`, or `natives-windows-arm64`) and replace the file in the
-platform folder. Keep the file names in the table above. A Gradle Maven fetch
-at `jar` time would produce the same bytes and would not change how
-`libgamepadjni` is built; it is intentionally not used.
+## `lwjgl-sdl-3.4.3/`
 
-## `trimmed/`
-
-Output of `prebuilt/build-sdl3.sh` / `build-sdl3-windows.bat`: an input-only
-SDL3 built from the `third_party/SDL` submodule (`release-3.4.14`). Useful for
-local experiments. Not linked, not packaged.
+Full SDL3 shared libraries taken from LWJGL **3.4.3** (the same SDL 3.4.14
+that Minecraft 26.3 uses). Not linked and not packaged. Kept as a size/ABI
+reference for `Sdl3Source.HOST`. Do not point CMake or Gradle at this
+directory.
 
 ## Licenses
 
-- SDL3: zlib — see [LICENSE_SDL3](../../LICENSE_SDL3)
-- LWJGL (distribution of these binaries): BSD-3-Clause
+- SDL3 (`trimmed/`, headers, submodule): zlib — see [LICENSE_SDL3](../../LICENSE_SDL3)
+- LWJGL (the unused `lwjgl-sdl-3.4.3/` copies): BSD-3-Clause

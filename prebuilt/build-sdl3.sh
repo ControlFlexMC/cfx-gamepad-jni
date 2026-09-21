@@ -4,7 +4,7 @@
 # Video, audio, rendering etc. are all disabled. No windowing backends needed.
 # Unified: macOS, Linux, Windows (MSYS2 MinGW64)
 #
-# Build artifacts (not packaged into the JAR):
+# Build artifacts (linked by CMake and packaged into the JAR):
 #   macOS:
 #     prebuilt/sdl/trimmed/darwin-aarch64/libSDL3.0.dylib
 #     prebuilt/sdl/trimmed/darwin-x86_64/libSDL3.0.dylib
@@ -19,7 +19,7 @@
 #     prebuilt/sdl/include/SDL3/
 # This script does not overwrite them.
 #
-# Bundled JAR SDL3 is taken from prebuilt/sdl/lwjgl-sdl-3.4.3/, not from here.
+# Output here is what CMake links and what Gradle packages into the JAR.
 #
 # Usage:
 #   All platforms:
@@ -679,8 +679,7 @@ print_usage_macos() {
     log_info "Integration instructions (macOS)"
 
     cat <<EOF
-Local trimmed SDL3 (not packaged). JAR SDL3 comes from
-prebuilt/sdl/lwjgl-sdl-3.4.3/.
+Trimmed SDL3 used for CMake linking and JAR packaging.
 
   ${INSTALL_DIR}/
       ├── darwin-aarch64/libSDL3.0.dylib
@@ -702,8 +701,7 @@ print_usage_linux() {
     log_info "Integration instructions (Linux)"
 
     cat <<EOF
-Local trimmed SDL3 (not packaged). JAR SDL3 comes from
-prebuilt/sdl/lwjgl-sdl-3.4.3/.
+Trimmed SDL3 used for CMake linking and JAR packaging.
 
   ${INSTALL_DIR}/
       ├── linux-x86_64/libSDL3.so
@@ -725,8 +723,7 @@ print_usage_windows() {
     log_info "Integration instructions (Windows)"
 
     cat <<EOF
-Local trimmed SDL3 (not packaged). JAR SDL3 comes from
-prebuilt/sdl/lwjgl-sdl-3.4.3/.
+Trimmed SDL3 used for CMake linking and JAR packaging.
 
   ${INSTALL_DIR}/windows-x86_64/
       ├── SDL3.dll

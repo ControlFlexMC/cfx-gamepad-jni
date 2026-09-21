@@ -55,7 +55,7 @@ Empty / missing `os.version` (`""`) does not start with `android-`, so not Andro
 
 ## Load dispatch
 
-`GamepadManager.initialize(Sdl3Source)` → `NativeLibraryLoader.load(source)` → `Sdl3Source.resolveLoadKind(isAndroid, source)`:
+`GamepadManager.initialize(Sdl3Source source)` → `NativeLibraryLoader.load(source)` → `Sdl3Source.resolveLoadKind(isAndroid, source)`:
 
 | `isAndroid` | Caller `Sdl3Source` | `LoadKind` | Behavior |
 |-------------|---------------------|------------|----------|

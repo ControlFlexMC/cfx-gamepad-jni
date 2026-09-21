@@ -55,7 +55,7 @@ Android 上的 SDL3 **只来自启动器 APK**。不使用：
 
 ## 加载分流
 
-`GamepadManager.initialize(Sdl3Source)` → `NativeLibraryLoader.load(source)` → `Sdl3Source.resolveLoadKind(isAndroid, source)`：
+`GamepadManager.initialize(Sdl3Source source)` → `NativeLibraryLoader.load(source)` → `Sdl3Source.resolveLoadKind(isAndroid, source)`：
 
 | `isAndroid` | 调用方 `Sdl3Source` | `LoadKind` | 行为 |
 |-------------|---------------------|------------|------|

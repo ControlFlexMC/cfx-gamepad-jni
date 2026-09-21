@@ -17,6 +17,10 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * <pre>{@code
  * GamepadManager mgr = GamepadManager.getInstance();
  *
+ * if (GamepadManager.hostPlatform().isAndroid()) {
+ *     // launcher game JVM: initialize() ignores Sdl3Source
+ * }
+ *
  * // Initialize SDL and load native libraries
  * if (!mgr.initialize(Sdl3Source.HOST)) {
  *     System.err.println("Failed to initialize SDL3");
@@ -81,6 +85,32 @@ public class GamepadManager {
         return instance;
     }
 
+    /**
+     * Cached host for this process ({@link HostPlatform#current()}).
+     *
+     * <p>Safe to call before {@link #initialize}; does not load natives.
+     * Switch on the result so Android and future iOS stay one branch site.</p>
+     */
+    public static HostPlatform hostPlatform() {
+        return HostPlatform.current();
+    }
+
+    /**
+     * Convenience for {@link #hostPlatform()}{@code .isAndroid()}.
+     */
+    public static boolean isAndroid() {
+        return HostPlatform.current().isAndroid();
+    }
+
+    /**
+     * Convenience for {@link #hostPlatform()}{@code .isIos()}.
+     *
+     * <p>Always {@code false} until iOS launcher detection is implemented.</p>
+     */
+    public static boolean isIos() {
+        return HostPlatform.current().isIos();
+    }
+
     // ═══════════════════════════════════════════
     // Lifecycle
     // ═══════════════════════════════════════════
@@ -89,7 +119,7 @@ public class GamepadManager {
      * Initialize SDL3 and load native libraries.
      *
      * <p>This must be called before any other gamepad operations.
-     * On desktop, {@code sdl3} selects host/LWJGL SDL3 or the copy bundled in
+     * On desktop, {@code source} selects host/LWJGL SDL3 or the copy bundled in
      * this JAR — the two are exclusive, with no fallback. On Android the argument
      * is ignored and the launcher APK's {@code libSDL3.so} is always used.</p>
      *
@@ -97,16 +127,16 @@ public class GamepadManager {
      * such as Minecraft 26.3 or an Android launcher can keep its own video SDL
      * instance.</p>
      *
-     * @param sdl3 desktop SDL3 source; ignored on Android
+     * @param source desktop SDL3 source; ignored on Android
      * @return true on success, false on failure
      */
-    public boolean initialize(Sdl3Source sdl3) {
+    public boolean initialize(Sdl3Source source) {
         if (initialized) {
             return true;
         }
 
         try {
-            NativeLibraryLoader.load(sdl3);
+            NativeLibraryLoader.load(source);
 
             // macOS driver strategy:
             // - MFI (GCController): ENABLED - only way to discover Bluetooth gamepads
