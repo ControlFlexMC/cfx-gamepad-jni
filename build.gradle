@@ -102,6 +102,16 @@ publishing {
 
 tasks.withType(JavaCompile) {
     options.encoding = 'UTF-8'
+    // --release pins the javac API table to the target version, so a JDK 9+
+    // method call fails the build instead of throwing NoSuchMethodError on a
+    // real JDK 8 runtime. javac 8 has no --release flag, and a JDK 8 compiler
+    // cannot leak newer platform APIs anyway, so only JDK 9+ gets the flag.
+    if (JavaVersion.current().isJava9Compatible()) {
+        def target = (findProperty('javaTargetCompatibility') ?: '1.8') as String
+        options.release = target.contains('.')
+                ? target.tokenize('.').last().toInteger()
+                : target.toInteger()
+    }
 }
 
 tasks.named('test') {
