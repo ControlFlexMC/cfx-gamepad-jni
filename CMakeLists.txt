@@ -160,12 +160,15 @@ if(CFX_TARGET_MACOS)
     )
 endif()
 
-# macOS: set install name and deployment target
+# macOS: set install name and deployment target.
+# >= 11.0 keeps availability checks truthful when a legacy host process runs in
+# SYSTEM_VERSION_COMPAT mode; below 11.0 the MFI/GCController paths answer false
+# and Bluetooth pads disappear. See prebuilt/build-sdl3.sh for the full story.
 if(CFX_TARGET_MACOS)
     set_target_properties(gamepadjni PROPERTIES
         MACOSX_RPATH TRUE
         INSTALL_RPATH "@loader_path"
-        CMAKE_OSX_DEPLOYMENT_TARGET "10.13"
+        CMAKE_OSX_DEPLOYMENT_TARGET "11.0"
     )
 endif()
 

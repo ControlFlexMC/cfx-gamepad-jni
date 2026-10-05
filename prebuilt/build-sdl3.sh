@@ -63,8 +63,13 @@ if [ "$OS_NAME" != "Darwin" ] && [ "$OS_NAME" != "Linux" ] && [[ "$OS_NAME" != M
     exit 1
 fi
 
-# macOS minimum deployment target (reduce system version dependency)
-MACOS_DEPLOYMENT_TARGET="10.13"
+# macOS minimum deployment target.
+# Must stay >= 11.0: below that, `@available(macOS 11.0, *)` inside this dylib
+# answers false whenever the host JVM runs in SYSTEM_VERSION_COMPAT mode (any
+# process whose java launcher was linked against a pre-Big-Sur SDK, e.g. Mojang
+# java-runtime-alpha / jre-legacy). SDL's MFI driver is gated on that check, so
+# a lower target silently hides Bluetooth gamepads on current macOS.
+MACOS_DEPLOYMENT_TARGET="11.0"
 
 # Build type
 BUILD_TYPE="Release"
