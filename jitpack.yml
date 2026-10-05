@@ -5,7 +5,11 @@
 # compilation step is needed during the JitPack build.
 
 jdk:
-  - openjdk11
+  # JitPack's "latest" image no longer ships jdk-11: the openjdk11 pin made
+  # gradlew die with "JAVA_HOME is set to an invalid directory: /usr/lib/jvm/jdk-11"
+  # (v0.9.0.4 build log). 17 is what the image provides and what the project is
+  # developed against; javac still emits --release 8 bytecode.
+  - openjdk17
 
 # Use the standard Gradle build + publish to local Maven repo.
 # JitPack automatically runs:
