@@ -221,7 +221,7 @@ dependencies {
 
 Replace `<version>` with a release version (e.g. `0.8.7`). Check [JitPack](https://jitpack.io/#ControlFlexMC/cfx-gamepad-jni) for available versions.
 
-JitPack builds the JAR from source on JDK 11. The resulting artifact includes Java classes and bundled native libraries for all supported platforms — no additional native compilation needed on the consumer side.
+JitPack builds the JAR from source on JDK 17 (still emitting Java 8 bytecode, see `build.gradle`). The resulting artifact includes Java classes and bundled native libraries for all supported platforms — no additional native compilation needed on the consumer side.
 
 ## Creating a Release
 
