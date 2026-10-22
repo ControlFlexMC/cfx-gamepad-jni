@@ -197,6 +197,28 @@ export CFX_LIB_PATH=/path/to/custom/natives
 
 The directory must contain the SDL3 and JNI library files for the current platform.
 
+### Android PlayStation face-button layout
+
+Android enumerates a DualSense through the generic HID driver, so the four face
+buttons reach SDL one step off: Square→`BUTTON_A`, Cross→`BUTTON_B`,
+Circle→`BUTTON_C`, Triangle→`BUTTON_X`. SDL's built-in `PS5 Controller` entry
+binds `a:b0,b:b1,x:b2,y:b17`, which rotates Cross/Circle/Triangle/Square against
+the Xbox names.
+
+On Android this library therefore rewrites those four bindings to Sony's order
+(`a:b1,b:b17,x:b0,y:b2`) as each gamepad is opened, and logs the change at INFO.
+PlayStation 4 pads are untouched — SDL's `PS4 Controller` entry already carries
+the Sony order.
+
+Both layouts share the same SDL GUID (a GUID encodes vendor/product plus
+capability bitmaps, not which keycode a driver assigns to which button), so the
+layout cannot be detected. Amazon Fire TV / Android 11 devices need the other
+order; keep SDL's mapping there explicitly:
+
+```bash
+-Dcfx.gamepadjni.androidPsFaceLayout=FireTV
+```
+
 ## Using as a Dependency (JitPack)
 
 This library is published to [JitPack](https://jitpack.io) for easy consumption in other Gradle projects.

@@ -372,7 +372,48 @@ public class GamepadManager {
         if (handle == 0) {
             return null;
         }
-        return new Gamepad(handle, instanceId);
+        Gamepad gamepad = new Gamepad(handle, instanceId);
+        applyAndroidPsFaceLayout(instanceId, gamepad);
+        return gamepad;
+    }
+
+    /**
+     * Android: rewrite the PlayStation face buttons to Sony's order.
+     *
+     * <p>Android's generic HID driver labels a DualSense one step off, and SDL's
+     * {@code PS5 Controller} entry encodes the Amazon Fire TV order instead. Both
+     * layouts share one GUID, so the layout cannot be inferred from the device:
+     * it defaults to Sony's and is switched back with
+     * {@code -Dcfx.gamepadjni.androidPsFaceLayout=FireTV}.</p>
+     *
+     * <p>Takes effect immediately — SDL re-loads the button mapping of an already
+     * open gamepad when a mapping is set, so no reopen is required.</p>
+     */
+    private void applyAndroidPsFaceLayout(int instanceId, Gamepad gamepad) {
+        if (!AndroidPsFaceLayout.shouldApply(
+                AndroidPlatform.isAndroid(),
+                gamepad.getType(),
+                gamepad.getVendor(),
+                gamepad.getProduct(),
+                System.getProperty(AndroidPsFaceLayout.LAYOUT_PROPERTY))) {
+            return;
+        }
+
+        String mapping = GamepadJNI.SDL_GetGamepadMapping(gamepad.getHandle());
+        String corrected = AndroidPsFaceLayout.corrected(mapping);
+        if (corrected == null || corrected.equals(mapping)) {
+            return;
+        }
+
+        if (GamepadJNI.SDL_SetGamepadMapping(instanceId, corrected)) {
+            GamepadLog.info("[gamepad-jni] Android: Sony face-button order applied (was {}, now {}). "
+                            + "Set -D{}={} to keep SDL's Fire TV layout.",
+                    mapping, corrected,
+                    AndroidPsFaceLayout.LAYOUT_PROPERTY, AndroidPsFaceLayout.LAYOUT_FIRE_TV);
+        } else {
+            GamepadLog.warn("[gamepad-jni] Android: SDL_SetGamepadMapping failed for {}; "
+                    + "keeping SDL's layout", gamepad.getName());
+        }
     }
 
     /**
