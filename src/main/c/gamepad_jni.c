@@ -7,10 +7,22 @@
  * Build: see ../../CMakeLists.txt and build script.
  */
 
+/* The system-cursor entry point at the bottom needs <windows.h>, and the lean /
+ * no-minmax macros must be in place before ANY header pulls it in (SDL3 does on
+ * Windows), so they are set ahead of every include. */
+#ifdef _WIN32
+#  define WIN32_LEAN_AND_MEAN
+#  define NOMINMAX
+#endif
+
 #include <jni.h>
 #include <SDL3/SDL.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef _WIN32
+#  include <windows.h>
+#endif
 
 /* ═══════════════════════════════════════════
  * JNI_OnLoad
@@ -738,4 +750,40 @@ Java_com_ifels_gamepadjni_GamepadJNI_SDL_1GetGamepadSensorData(JNIEnv *env, jcla
 
     (*env)->ReleaseFloatArrayElements(env, result, buf, 0);
     return result;
+}
+
+/* ═══════════════════════════════════════════
+ * System cursor visibility (Windows only)
+ *
+ * Why this exists: the 1.7.10 client ships NO JNA on its launcher classpath
+ * (1.8.9 has jna 3.4.0 + platform 3.4.0, 1.12.2 has 4.4.0, 1.7.10 has none --
+ * measured from both version jsons), so the mod's GLFW_CURSOR_HIDDEN stand-in
+ * used to degrade to "the system cursor stays visible next to the drawn one".
+ * Carrying a JNA copy just for ShowCursor costs ~1.8 MB in every 1.7.10 build;
+ * this library is bundled by the mod anyway, so one entry point here replaces
+ * it at zero dependency cost.
+ *
+ * ShowCursor moves a display COUNTER. The caller is responsible for transition
+ * discipline -- compat/CursorVisibility calls this only when the desired state
+ * actually changes, because hideSystemCursor runs every frame while the pointer
+ * settles. This wrapper is deliberately dumb: forward the flag, return the new
+ * counter so the caller can log it.
+ *
+ * Declared in SystemCursorJNI, NOT GamepadJNI: verifyNativeSymbols requires
+ * every GamepadJNI method to be exported by EVERY packaged binary, and this one
+ * only exists on Windows.
+ * ═══════════════════════════════════════════ */
+JNIEXPORT jint JNICALL
+Java_com_ifels_gamepadjni_SystemCursorJNI_showCursor(JNIEnv *env, jclass cls, jboolean hide) {
+    (void)env; (void)cls;
+#ifdef _WIN32
+    return (jint)ShowCursor(hide ? FALSE : TRUE);
+#else
+    /* No implementation on macOS/Linux: the port has no cursor API there and the
+     * mod never asks for it (SystemCursor.isSupported() is Windows-only). Keeping
+     * the symbol defined on every platform means a future rebuild of any target
+     * still resolves it instead of throwing UnsatisfiedLinkError if something
+     * does call. */
+    return 0;
+#endif
 }

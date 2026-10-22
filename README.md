@@ -153,6 +153,24 @@ cd prebuilt
 ./build-jni.sh --arch aarch64 # cross-compile windows-aarch64 (Windows hosts)
 ```
 
+#### Windows one-shot: `build-jni-windows.bat`
+
+`prebuilt/build-jni-windows.bat` is the Windows entry point and takes the target
+directly — no MSYS2 shell, no manually exported `WINDOWS_AARCH64_CC`:
+
+```bat
+prebuilt\build-jni-windows.bat            :: windows-x86_64 (native, default)
+prebuilt\build-jni-windows.bat x86_64     :: same, spelled out
+prebuilt\build-jni-windows.bat aarch64    :: cross-build windows-aarch64
+prebuilt\build-jni-windows.bat all        :: both
+```
+
+It picks the MSYS2 MinGW64 environment, resolves the ARM64 cross compiler
+(`WINDOWS_AARCH64_CC`, then `zig` on PATH, then `ZIG_HOME`), and forwards the
+target to `build-jni.sh` — one build implementation for every platform.
+Double-clicking passes no argument, so it builds x86_64 and pauses at the end.
+`--help` prints the same summary.
+
 #### Windows ARM64 cross-compile
 
 `windows-aarch64` is cross-compiled from an x86_64 Windows host, so it does not need an ARM64 machine. CMake cannot drive this target — the host MSYS2/MinGW toolchain is x86_64-only and ships no aarch64 sysroot — so a clang/lld cross toolchain is used instead: either [zig](https://ziglang.org) or [llvm-mingw](https://github.com/mstorsjo/llvm-mingw), whichever `build-jni.sh` finds on PATH.
@@ -172,6 +190,7 @@ Two details worth knowing when rebuilding this artifact:
 
 - SDL3 is resolved by reading the export table of `prebuilt/sdl/trimmed/windows-aarch64/SDL3.dll` directly, so no ARM64 import library is stored in the repository (same reason the x86_64 `libSDL3.dll.a` was removed in `0e24ee3`).
 - The ARM64 artifact imports the UCRT (`api-ms-win-crt-*.dll`) while the x86_64 artifact — built by MSYS2 MinGW — imports `msvcrt.dll`. Both are OS components on Windows 10/11 ARM64.
+- If zig is unpacked under `%TEMP%` it can fail on its own `lib/std/std.zig` with `AccessDenied` during the compiler-rt step, and inside MSYS2 it may report `AppDataDirUnavailable`. Unpack it somewhere permanent (`C:\zig`, `C:\work\tools\zig-…`) and, if the second one persists, point `ZIG_GLOBAL_CACHE_DIR` / `ZIG_LOCAL_CACHE_DIR` at a writable directory.
 
 **Cross-compiling anything else** is done on the target OS. Repeat steps 1–2 on each platform you want to support.
 

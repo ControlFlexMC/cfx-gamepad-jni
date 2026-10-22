@@ -152,6 +152,14 @@ else()
     )
 endif()
 
+# Windows: ShowCursor (the system-cursor entry point at the bottom of
+# gamepad_jni.c) lives in user32. MinGW's default import list usually carries it
+# already, but it is the only Win32 API this library uses, so the dependency is
+# stated explicitly instead of relying on the toolchain's defaults.
+if(WIN32 AND NOT ANDROID)
+    target_link_libraries(gamepadjni PRIVATE user32)
+endif()
+
 # macOS: link frameworks for GCController queries
 if(CFX_TARGET_MACOS)
     target_link_libraries(gamepadjni PRIVATE
