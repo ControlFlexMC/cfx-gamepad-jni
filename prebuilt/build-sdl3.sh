@@ -38,8 +38,10 @@
 #
 # Prerequisites:
 #   macOS:         cmake (brew install cmake)
-#   Linux:         cmake gcc (sudo apt install cmake build-essential)
-#                  cross-compile: gcc-aarch64-linux-gnu (optional)
+#   Linux:         cmake gcc libudev-dev libusb-1.0-0-dev
+#                  (sudo apt install cmake build-essential libudev-dev libusb-1.0-0-dev)
+#                  cross-compile: gcc-aarch64-linux-gnu (optional), plus arm64
+#                  libudev-dev and libusb-1.0-0-dev in /usr/aarch64-linux-gnu
 #   Windows:       MSYS2 MinGW64 with cmake, gcc
 #                  (pacman -S mingw-w64-x86_64-cmake mingw-w64-x86_64-gcc)
 #
@@ -128,8 +130,12 @@ SDL_CMAKE_COMMON_OPTIONS=(
     -DSDL_STATIC=OFF
     -DSDL_SHARED=ON
 
-    # ── Statically link third-party deps (bundled into SDL library) ──
-    -DSDL_DEPS_SHARED=OFF
+    # ── Load third-party deps dynamically (dlopen) ──
+    # This gates every *_SHARED option, SDL_HIDAPI_LIBUSB_SHARED included.
+    # cmake_dependent_option treats those as unavailable while this is OFF and
+    # silently forces them back to OFF, even when they are passed as -D on the
+    # command line. The visible symptom is a DT_NEEDED on libusb-1.0.so.0.
+    -DSDL_DEPS_SHARED=ON
 
     # ── Do not build test library and examples ──
     -DSDL_TEST_LIBRARY=OFF
@@ -268,15 +274,14 @@ case "$OS_NAME" in
             # interface, so hidraw opens but cannot initialise them.
             -DSDL_HIDAPI_LIBUSB=ON
 
-            # MUST be explicit: SDL_HIDAPI_LIBUSB_SHARED is declared with
-            # dep_option(..., ON, "SDL_HIDAPI_LIBUSB;SDL_DEPS_SHARED", OFF),
-            # and this script sets SDL_DEPS_SHARED=OFF — so the default is
-            # forced to OFF and libusb would be linked directly. A DT_NEEDED
-            # entry turns a missing libusb-1.0.so.0 on the user's machine into
-            # "libSDL3.so fails to load" instead of "libusb backend disabled",
-            # which would take the entire mod's controller support down.
             # With SHARED=ON, SDL stores the soname ("libusb-1.0.so.0") and
-            # dlopens it from src/misc/SDL_libusb.c, mirroring udev.
+            # dlopens it from src/misc/SDL_libusb.c, mirroring udev. A
+            # DT_NEEDED entry instead turns a missing libusb-1.0.so.0 on the
+            # user's machine into "libSDL3.so fails to load", which would take
+            # the entire mod's controller support down. Requires
+            # SDL_DEPS_SHARED=ON (set in the common options): its
+            # dep_option(..., "SDL_HIDAPI_LIBUSB;SDL_DEPS_SHARED", OFF)
+            # dependency makes this flag alone a no-op.
             -DSDL_HIDAPI_LIBUSB_SHARED=ON
         )
         ;;
@@ -406,10 +411,28 @@ build_arch() {
                 echo "   Install: sudo apt install gcc-aarch64-linux-gnu"
                 exit 1
             fi
+            # The Debian/Ubuntu cross sysroot lives in /usr/<triplet>. Point
+            # CMake's find_* commands at it, and keep the host pkg-config out
+            # of the way: otherwise LibUSB resolves to the x86_64 .so, the
+            # aarch64 link test fails, and libusb is silently compiled out.
+            if [ ! -f "/usr/aarch64-linux-gnu/include/libudev.h" ] \
+               || [ ! -f "/usr/aarch64-linux-gnu/include/libusb-1.0/libusb.h" ]; then
+                echo "❌ Error: aarch64 libudev/libusb headers missing from the cross sysroot"
+                echo "   Expected: /usr/aarch64-linux-gnu/include/libudev.h"
+                echo "             /usr/aarch64-linux-gnu/include/libusb-1.0/libusb.h"
+                echo "   Install arm64 libudev-dev + libusb-1.0-0-dev into"
+                echo "   /usr/aarch64-linux-gnu (see Prerequisites at the top)."
+                exit 1
+            fi
             cmake_args+=(
                 -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc
                 -DCMAKE_SYSTEM_PROCESSOR=aarch64
                 -DCMAKE_SYSTEM_NAME=Linux
+                -DCMAKE_FIND_ROOT_PATH=/usr/aarch64-linux-gnu
+                -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY
+                -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY
+                -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER
+                -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON
             )
             echo "   Cross-compiling with aarch64-linux-gnu-gcc"
         fi
@@ -684,7 +707,10 @@ verify_output_linux() {
             if grep -aqF "${needle}" "${so}"; then
                 echo "     ✅ ${needle}"
             else
-                echo "     ❌ ${needle} not found"
+                # Not a missing system library: this string is what SDL
+                # embeds when the backend is compiled in and dlopen'd, so its
+                # absence means the backend was compiled out at configure time.
+                echo "     ❌ ${needle} not embedded in libSDL3.so (backend compiled out)"
                 assert_failed=1
             fi
         done
