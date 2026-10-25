@@ -131,6 +131,45 @@ chmod +x build-sdl3.sh
 
 This produces per-platform SDL3 binaries under `prebuilt/sdl/trimmed/<platform>/`, stripped down to only input subsystems (keyboard, mouse, joystick/gamepad, sensor). No audio, GPU, render, camera, or haptic subsystems are included. CMake links `libgamepadjni` against these files; Gradle copies them into the JAR.
 
+#### Linux: udev is required, libusb is a dlopen'd fallback
+
+The Linux build turns on three options the other platforms do not use:
+
+```bash
+-DSDL_LIBUDEV=ON                 # hidraw enumeration
+-DSDL_HIDAPI_LIBUSB=ON           # optional fallback backend
+-DSDL_HIDAPI_LIBUSB_SHARED=ON    # ...loaded via dlopen, not linked
+```
+
+`SDL_LIBUDEV` is not an optional enhancement. `src/hidapi/SDL_hidapi_linux.h` wraps
+the entire hidraw backend — including `#include "linux/hid.c"` and
+`#define HAVE_PLATFORM_BACKEND 1` — in `#ifdef SDL_USE_LIBUDEV`. Disabling it removes
+every HIDAPI driver on Linux and leaves evdev as the only path in: DualShock/DualSense,
+Switch Pro and the Steam Controller stop being detected while SDL still reports a
+successful init. That is the failure mode to avoid — it is silent.
+
+`SDL_HIDAPI_LIBUSB_SHARED=ON` must be passed explicitly. The option is declared as
+`dep_option(..., ON, "SDL_HIDAPI_LIBUSB;SDL_DEPS_SHARED", OFF)` and this script sets
+`SDL_DEPS_SHARED=OFF`, so the default collapses to OFF and libusb gets linked directly.
+A `DT_NEEDED` entry turns a missing `libusb-1.0.so.0` on a user's machine into
+"libSDL3.so fails to load" instead of "libusb backend disabled". With `SHARED=ON`,
+SDL stores the soname and dlopens it from `src/misc/SDL_libusb.c`, exactly like udev.
+
+Both are dlopen'd, so a machine lacking either library still loads `libSDL3.so` and
+merely loses that backend: `SDL_InitLibUSB()` returns false, SDL logs `Couldn't load
+libusb` at debug level, and the platform backend carries on. That is also why macOS and
+Windows keep `-DSDL_HIDAPI_LIBUSB=OFF` — they already have native backends, and enabling
+it there would only add a library we do not ship.
+
+Build prerequisites (Debian/Ubuntu): `apt install libudev-dev libusb-1.0-0-dev`.
+Cross-compiling `aarch64` needs an arm64 `libudev-dev` in the sysroot, otherwise
+`check_include_file` silently drops the option.
+
+`verify_output_linux()` asserts the result: the shipped `.so` must contain
+`libudev.so.1` and `libusb-1.0.so.0`, and neither may appear in `DT_NEEDED`. A failing
+assertion aborts the build instead of producing a quietly broken artifact. Expected
+size afterwards: `linux-x86_64/libSDL3.so` ≈ 2.37–2.39 MB (≈ +30–40 KB in the JAR).
+
 ### Step 2: Build the JNI native library
 
 ```bash

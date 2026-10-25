@@ -152,8 +152,13 @@ SDL_CMAKE_COMMON_OPTIONS=(
     -DSDL_HIDAPI=ON
     -DSDL_HIDAPI_JOYSTICK=ON
     -DSDL_VIRTUAL_JOYSTICK=ON
-    # ❌ Disable: libusb (macOS uses native IOKit HID; Linux uses hidraw/evdev; Windows uses native HID)
-    -DSDL_HIDAPI_LIBUSB=OFF
+
+    # libusb is configured per platform (see SDL_CMAKE_PLATFORM_OPTIONS below):
+    #   Linux          → ON  (fallback for devices hidraw cannot initialise)
+    #   macOS/Windows  → OFF (native IOKit / Win32 HID is enough, and linking
+    #                          libusb there would add a library we do not ship)
+    # It must stay explicit on macOS/Windows: SDL defaults this option to ON
+    # whenever libusb happens to be present on the build machine.
 
     # ❌ Disable: Audio subsystem
     -DSDL_AUDIO=OFF
@@ -203,7 +208,12 @@ SDL_CMAKE_COMMON_OPTIONS=(
     -DSDL_DBUS=OFF
     -DSDL_IBUS=OFF
     -DSDL_LIBURING=OFF
-    -DSDL_LIBUDEV=OFF
+    # NOTE: libudev is intentionally NOT disabled here. It is Linux-only
+    # (CheckLibUDev() is only invoked in SDL's Linux branch) and is enabled in
+    # the Linux platform options below. Disabling it is not a size win but a
+    # capability loss: src/hidapi/SDL_hidapi_linux.h wraps the entire hidraw
+    # backend in `#ifdef SDL_USE_LIBUDEV`, so without udev there is no hidraw
+    # enumeration at all on Linux.
 )
 
 # Linux: skip the X11/Wayland hard-error check when video is disabled.
@@ -232,6 +242,9 @@ case "$OS_NAME" in
     Darwin)
         SDL_CMAKE_PLATFORM_OPTIONS=(
             "${SDL_VIDEO_BACKEND_OPTIONS[@]}"
+            # macOS: IOKit/MFI covers every pad we care about. Keep libusb off
+            # so the dylib never gains a libusb-1.0.dylib dependency.
+            -DSDL_HIDAPI_LIBUSB=OFF
         )
         ;;
     Linux)
@@ -240,6 +253,31 @@ case "$OS_NAME" in
             -DSDL_DIRECTX=OFF
             -DSDL_XINPUT=OFF
             -DSDL_WASAPI=OFF
+
+            # ── Linux input stack ─────────────────────────────────────────
+            # udev: the only enumeration path to hidraw devices. Without it
+            # SDL compiles out the whole hidraw backend (see
+            # src/hidapi/SDL_hidapi_linux.h), leaving evdev as the only way in.
+            # Requires libudev headers at configure time (Debian/Ubuntu:
+            # libudev-dev, Arch: systemd-libs). Cross-compiling aarch64 needs
+            # an arm64 libudev-dev in the sysroot, otherwise the option is
+            # silently dropped — verify_output_linux() catches that.
+            -DSDL_LIBUDEV=ON
+
+            # libusb: a fallback for pads whose kernel driver claims the
+            # interface, so hidraw opens but cannot initialise them.
+            -DSDL_HIDAPI_LIBUSB=ON
+
+            # MUST be explicit: SDL_HIDAPI_LIBUSB_SHARED is declared with
+            # dep_option(..., ON, "SDL_HIDAPI_LIBUSB;SDL_DEPS_SHARED", OFF),
+            # and this script sets SDL_DEPS_SHARED=OFF — so the default is
+            # forced to OFF and libusb would be linked directly. A DT_NEEDED
+            # entry turns a missing libusb-1.0.so.0 on the user's machine into
+            # "libSDL3.so fails to load" instead of "libusb backend disabled",
+            # which would take the entire mod's controller support down.
+            # With SHARED=ON, SDL stores the soname ("libusb-1.0.so.0") and
+            # dlopens it from src/misc/SDL_libusb.c, mirroring udev.
+            -DSDL_HIDAPI_LIBUSB_SHARED=ON
         )
         ;;
     MINGW*|MSYS*)
@@ -250,6 +288,8 @@ case "$OS_NAME" in
             -DSDL_XINPUT=ON
             # WASAPI (audio, not needed)
             -DSDL_WASAPI=OFF
+            # Windows: Win32 HID is enough; libusb would mean shipping a DLL.
+            -DSDL_HIDAPI_LIBUSB=OFF
         )
         ;;
 esac
@@ -625,6 +665,50 @@ verify_output_linux() {
             break
         fi
     done
+    echo ""
+
+    # ── Input stack assertions ────────────────────────────────────────────
+    # Silent feature loss is what this catches: with SDL_LIBUDEV=OFF the whole
+    # hidraw backend is compiled out (src/hidapi/SDL_hidapi_linux.h is wrapped
+    # in #ifdef SDL_USE_LIBUDEV) and with SDL_HIDAPI_LIBUSB=OFF there is no
+    # fallback either — SDL then still reports a successful init while HIDAPI
+    # has no usable backend on Linux.
+    echo "🔎 Linux input stack assertions:"
+    local assert_failed=0
+    for arch in x86_64 aarch64; do
+        local so="${INSTALL_DIR}/linux-${arch}/libSDL3.so"
+        [ -f "${so}" ] || continue
+        echo "  ${arch}:"
+        local needle
+        for needle in 'libudev.so.1' 'libusb-1.0.so.0' '/dev/input'; do
+            if grep -aqF "${needle}" "${so}"; then
+                echo "     ✅ ${needle}"
+            else
+                echo "     ❌ ${needle} not found"
+                assert_failed=1
+            fi
+        done
+        # Both must be dlopen'd. A DT_NEEDED entry would make libSDL3.so itself
+        # fail to load on machines without them, turning a graceful degradation
+        # into a hard failure of the whole controller stack.
+        if command -v readelf &>/dev/null; then
+            if readelf -d "${so}" 2>/dev/null | grep -qE 'NEEDED.*(libudev|libusb)'; then
+                echo "     ❌ linked directly; must be dlopen'd"
+                assert_failed=1
+            else
+                echo "     ✅ dlopen'd (no DT_NEEDED)"
+            fi
+        fi
+    done
+    if [ "${assert_failed}" -ne 0 ]; then
+        echo ""
+        echo "❌ Linux input stack incomplete — refusing to ship this build."
+        echo "   Likely causes:"
+        echo "     • libudev headers missing (Debian/Ubuntu: apt install libudev-dev)"
+        echo "     • cross-compiling aarch64 without an arm64 libudev-dev in the sysroot"
+        echo "     • SDL_LIBUDEV / SDL_HIDAPI_LIBUSB_SHARED dropped from the options"
+        exit 1
+    fi
     echo ""
 
     # Check headers
