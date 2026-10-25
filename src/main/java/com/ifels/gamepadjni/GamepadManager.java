@@ -2,7 +2,9 @@ package com.ifels.gamepadjni;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -58,6 +60,12 @@ public class GamepadManager {
     private volatile boolean ownsSdlLifecycle = false;
     private volatile boolean pollThreadRunning = false;
     private Thread pollThread;
+    /** True when SDL's log output function is routed into our native ring. */
+    private volatile boolean sdlLogCaptureInstalled = false;
+    /** Minimum interval between reports of the same captured SDL message. */
+    private static final long SDL_LOG_REPORT_INTERVAL_NANOS = 10_000_000_000L;
+    /** Per-message rate limit state; guarded by {@code this}. */
+    private final Map<String, SdlLogRepeat> sdlLogRepeats = new HashMap<>();
 
     /** Connected gamepads: instanceId -> Gamepad. */
     private final ConcurrentHashMap<Integer, Gamepad> gamepads = new ConcurrentHashMap<>();
@@ -138,6 +146,16 @@ public class GamepadManager {
         try {
             NativeLibraryLoader.load(source);
 
+            // Capture SDL's own log stream before SDL_InitSubSystem: backend
+            // selection happens during init, and those messages are DEBUG --
+            // below SDL's default filter (app=info, assert=warn, *=error).
+            // Bundled SDL only: a host SDL3 may already own the output function.
+            // On platforms whose natives predate this entry point the call
+            // throws UnsatisfiedLinkError, which only disables diagnostics.
+            if (!NativeLibraryLoader.usedHostSdl3()) {
+                installSdlLogCapture();
+            }
+
             // macOS driver strategy:
             // - MFI (GCController): ENABLED - only way to discover Bluetooth gamepads
             // - IOKit: ENABLED - handles USB/wired gamepads
@@ -189,6 +207,10 @@ public class GamepadManager {
             // Detect currently connected gamepads
             refreshGamepads();
 
+            // Emit the backend-selection lines captured during init now, on the
+            // calling (render) thread.
+            drainSdlLogs();
+
             if (AndroidPlatform.isAndroid() && getGamepadCount() == 0) {
                 GamepadLog.warn("[gamepad-jni] {}", describeNoGamepadHint());
             }
@@ -208,6 +230,129 @@ public class GamepadManager {
                     t.getClass().getName(), t.getMessage());
             return false;
         }
+    }
+
+    /**
+     * Route SDL's log output into the native ring buffer. Diagnostics only, and
+     * optional: natives built before 0.9.3.2 (or for a platform not rebuilt
+     * since) lack the entry point, so a missing symbol just leaves the bridge
+     * disabled.
+     */
+    private void installSdlLogCapture() {
+        boolean installed = false;
+        try {
+            installed = SdlLogJNI.installLogCapture();
+        } catch (UnsatisfiedLinkError e) {
+            // Native predates the bridge. Never let this affect initialization.
+        }
+        sdlLogCaptureInstalled = installed;
+        sdlLogRepeats.clear();
+        if (!installed) {
+            GamepadLog.debug("[gamepad-jni] SDL log capture unavailable in this native build");
+        }
+    }
+
+    /** Restore SDL's previous log output function and input log priority. */
+    private void uninstallSdlLogCapture() {
+        if (!sdlLogCaptureInstalled) {
+            return;
+        }
+        try {
+            SdlLogJNI.uninstallLogCapture();
+        } catch (UnsatisfiedLinkError ignored) {
+        }
+        sdlLogCaptureInstalled = false;
+    }
+
+    /**
+     * Forward queued SDL log lines to the {@code gamepad-jni} logger. Called
+     * from the render/client thread and the poll thread; both are ordinary
+     * Java threads, so the SDL callback itself never has to touch the JVM.
+     *
+     * <p>Messages are rate-limited per line. Without libudev, SDL's evdev
+     * driver retries HIDAPI initialization on every device enumeration and
+     * re-emits "Using udev for HIDAPI device discovery" + "Couldn't load
+     * libusb" on every update; logging each retry would turn a degraded backend
+     * into a log flood. The two lines alternate, so consecutive-duplicate
+     * suppression alone does not help.</p>
+     */
+    private synchronized void drainSdlLogs() {
+        if (!sdlLogCaptureInstalled) {
+            return;
+        }
+        String[] lines;
+        try {
+            lines = SdlLogJNI.drainLogs(32);
+        } catch (UnsatisfiedLinkError e) {
+            sdlLogCaptureInstalled = false;
+            return;
+        }
+        if (lines == null) {
+            return;
+        }
+
+        long now = System.nanoTime();
+        for (String line : lines) {
+            if (line == null) {
+                continue;
+            }
+            SdlLogRepeat repeat = sdlLogRepeats.get(line);
+            if (repeat == null) {
+                repeat = new SdlLogRepeat();
+                sdlLogRepeats.put(line, repeat);
+            } else if (now - repeat.lastReportNanos < SDL_LOG_REPORT_INTERVAL_NANOS) {
+                ++repeat.suppressed;
+                continue;
+            }
+
+            logSdlLine(line, repeat.suppressed);
+            repeat.lastReportNanos = now;
+            repeat.suppressed = 0;
+        }
+
+        // Bound the table: real SDL sessions produce a handful of distinct
+        // messages. Clearing only loses rate-limit state, never a message.
+        if (sdlLogRepeats.size() > 256) {
+            sdlLogRepeats.clear();
+        }
+    }
+
+    /**
+     * Log a captured line at the level SDL assigned to it. The native side
+     * formats each entry as {@code [SDL][category][LEVEL] message}; DEBUG is
+     * the common case (backend selection, missing-backend warnings), so those
+     * entries stay invisible unless debug logging is enabled.
+     */
+    private static void logSdlLine(String line, long suppressed) {
+        int categoryEnd = line.indexOf("][", 6);
+        int levelStart = categoryEnd + 2;
+        int levelEnd = levelStart > 1 ? line.indexOf(']', levelStart) : -1;
+        String level = levelEnd > levelStart ? line.substring(levelStart, levelEnd) : "";
+        String message = suppressed > 0
+                ? line + " (suppressed " + suppressed + " repeat(s) since the last report)"
+                : line;
+
+        switch (level) {
+            case "ERROR":
+            case "CRITICAL":
+                GamepadLog.error("{}", message);
+                break;
+            case "WARN":
+                GamepadLog.warn("{}", message);
+                break;
+            case "INFO":
+                GamepadLog.info("{}", message);
+                break;
+            default: // TRACE / VERBOSE / DEBUG / unparseable
+                GamepadLog.debug("{}", message);
+                break;
+        }
+    }
+
+    /** Rate-limit state for one captured SDL message. */
+    private static final class SdlLogRepeat {
+        long lastReportNanos;
+        long suppressed;
     }
 
     /**
@@ -286,6 +431,10 @@ public class GamepadManager {
         if (ownsSdlLifecycle && !AndroidPlatform.isAndroid()) {
             GamepadJNI.SDL_Quit();
         }
+        // Flush anything SDL emitted while shutting down, then restore the
+        // previous output function and input log priority.
+        drainSdlLogs();
+        uninstallSdlLogCapture();
         ownsSdlLifecycle = false;
         initialized = false;
         GamepadLog.info("[gamepad-jni] SDL3 gamepad subsystem shutdown complete");
@@ -499,6 +648,7 @@ public class GamepadManager {
                     if (!IS_MAC) {
                         // Windows/Linux: safe to call from background thread
                         GamepadJNI.SDL_UpdateGamepads();
+                        drainSdlLogs();
 
                         tickCounter++;
                         if (tickCounter >= 120) { // ~2 seconds at 60Hz
@@ -549,6 +699,10 @@ public class GamepadManager {
      */
     public void updateGamepads() {
         if (!initialized) return;
+
+        // Drained here as well as on the poll thread: callers invoke this from
+        // the render/client thread, and it is the only drain point on macOS.
+        drainSdlLogs();
 
         if (!IS_MAC) {
             return;

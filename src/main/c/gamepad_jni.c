@@ -71,6 +71,247 @@ static void *jlong_to_ptr(jlong handle) {
 }
 
 /* ═══════════════════════════════════════════
+ * SDL log capture
+ *
+ * SDL's default filter is app=info, assert=warn, test=verbose, *=error. The
+ * input category is therefore ERROR-only, which hides precisely the messages
+ * that explain a silently degraded backend: "Using udev for HIDAPI joystick
+ * device discovery", "Couldn't load libusb", "udev init failed, disabling udev
+ * integration" are all DEBUG.
+ *
+ * This installs a public-API log output function (SDL_SetLogOutputFunction,
+ * SDL 3.2+) so SDL itself is untouched, lowers only the input category to
+ * DEBUG, and copies each line into a fixed ring buffer. The callback runs on
+ * whichever thread logged, sometimes under SDL's internal log mutex, so it
+ * never calls into the JVM -- Java drains the ring from a thread of its own
+ * choosing.
+ *
+ * Declared in SdlLogJNI, NOT GamepadJNI: verifyNativeSymbols requires every
+ * GamepadJNI entry point in EVERY packaged binary, and only the Linux natives
+ * are rebuilt for 0.9.3.2. Callers catch UnsatisfiedLinkError on the platforms
+ * still carrying older binaries.
+ * ═══════════════════════════════════════════ */
+
+#define SDL_LOG_CAPTURE_CAPACITY 64
+#define SDL_LOG_CAPTURE_LINE     1024
+
+typedef struct {
+    int category;
+    int priority;
+    char message[SDL_LOG_CAPTURE_LINE];
+} SdlLogCaptureEntry;
+
+static SdlLogCaptureEntry sdl_log_entries[SDL_LOG_CAPTURE_CAPACITY];
+static int sdl_log_head;                      /* next slot to write */
+static int sdl_log_tail;                      /* next slot to read */
+static unsigned int sdl_log_dropped;          /* lines lost to a full ring */
+static SDL_Mutex *sdl_log_mutex;              /* guards head/tail/entries */
+static SDL_LogOutputFunction sdl_log_previous;
+static void *sdl_log_previous_userdata;
+static SDL_LogPriority sdl_log_previous_input_priority = SDL_LOG_PRIORITY_INVALID;
+static int sdl_log_capture_installed;
+
+static const char *sdl_log_category_name(int category) {
+    switch (category) {
+        case SDL_LOG_CATEGORY_APPLICATION: return "app";
+        case SDL_LOG_CATEGORY_ERROR:       return "error";
+        case SDL_LOG_CATEGORY_ASSERT:      return "assert";
+        case SDL_LOG_CATEGORY_SYSTEM:      return "system";
+        case SDL_LOG_CATEGORY_AUDIO:       return "audio";
+        case SDL_LOG_CATEGORY_VIDEO:       return "video";
+        case SDL_LOG_CATEGORY_RENDER:      return "render";
+        case SDL_LOG_CATEGORY_INPUT:       return "input";
+        case SDL_LOG_CATEGORY_TEST:        return "test";
+        case SDL_LOG_CATEGORY_GPU:         return "gpu";
+        default:                           return NULL;
+    }
+}
+
+static const char *sdl_log_priority_name(int priority) {
+    switch (priority) {
+        case SDL_LOG_PRIORITY_TRACE:    return "TRACE";
+        case SDL_LOG_PRIORITY_VERBOSE:  return "VERBOSE";
+        case SDL_LOG_PRIORITY_DEBUG:    return "DEBUG";
+        case SDL_LOG_PRIORITY_INFO:     return "INFO";
+        case SDL_LOG_PRIORITY_WARN:     return "WARN";
+        case SDL_LOG_PRIORITY_ERROR:    return "ERROR";
+        case SDL_LOG_PRIORITY_CRITICAL: return "CRITICAL";
+        default:                        return "INVALID";
+    }
+}
+
+static void SDLCALL gamepad_jni_log_capture(void *userdata, int category,
+                                            SDL_LogPriority priority,
+                                            const char *message) {
+    int next;
+
+    (void)userdata;
+    if (!sdl_log_mutex || !message) {
+        return;
+    }
+
+    SDL_LockMutex(sdl_log_mutex);
+    next = (sdl_log_head + 1) % SDL_LOG_CAPTURE_CAPACITY;
+    if (next == sdl_log_tail) {
+        ++sdl_log_dropped;
+    } else {
+        SdlLogCaptureEntry *entry = &sdl_log_entries[sdl_log_head];
+        entry->category = category;
+        entry->priority = (int)priority;
+        SDL_strlcpy(entry->message, message, sizeof(entry->message));
+        sdl_log_head = next;
+    }
+    SDL_UnlockMutex(sdl_log_mutex);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_ifels_gamepadjni_SdlLogJNI_installLogCapture(JNIEnv *env, jclass cls) {
+    (void)env; (void)cls;
+
+    if (sdl_log_capture_installed) {
+        return JNI_TRUE;
+    }
+    if (!sdl_log_mutex) {
+        sdl_log_mutex = SDL_CreateMutex();
+        if (!sdl_log_mutex) {
+            return JNI_FALSE;
+        }
+    }
+
+    SDL_GetLogOutputFunction(&sdl_log_previous, &sdl_log_previous_userdata);
+    sdl_log_previous_input_priority = SDL_GetLogPriority(SDL_LOG_CATEGORY_INPUT);
+    SDL_SetLogPriority(SDL_LOG_CATEGORY_INPUT, SDL_LOG_PRIORITY_DEBUG);
+    SDL_SetLogOutputFunction(gamepad_jni_log_capture, NULL);
+    sdl_log_capture_installed = 1;
+    return JNI_TRUE;
+}
+
+JNIEXPORT jobjectArray JNICALL
+Java_com_ifels_gamepadjni_SdlLogJNI_drainLogs(JNIEnv *env, jclass cls, jint maxLines) {
+    int capacity = SDL_LOG_CAPTURE_CAPACITY;
+    int available, count, dropped, total, i;
+    SdlLogCaptureEntry *batch;
+    jobjectArray result;
+    jclass stringClass;
+
+    (void)cls;
+
+    if (!sdl_log_mutex || maxLines <= 0) {
+        return NULL;
+    }
+
+    SDL_LockMutex(sdl_log_mutex);
+    available = (sdl_log_head - sdl_log_tail + capacity) % capacity;
+    if (available <= 0) {
+        SDL_UnlockMutex(sdl_log_mutex);
+        return NULL;
+    }
+    count = available < (int)maxLines ? available : (int)maxLines;
+    batch = (SdlLogCaptureEntry *)malloc(sizeof(SdlLogCaptureEntry) * (size_t)count);
+    if (!batch) {
+        SDL_UnlockMutex(sdl_log_mutex);
+        return NULL;
+    }
+    for (i = 0; i < count; ++i) {
+        batch[i] = sdl_log_entries[sdl_log_tail];
+        sdl_log_tail = (sdl_log_tail + 1) % capacity;
+    }
+    /* Only report drops once the ring is empty, so the count lines up with
+     * what the reader actually lost. */
+    dropped = 0;
+    total = count;
+    if (count == available && sdl_log_dropped > 0) {
+        dropped = (int)sdl_log_dropped;
+        sdl_log_dropped = 0;
+        ++total;
+    }
+    SDL_UnlockMutex(sdl_log_mutex);
+
+    stringClass = (*env)->FindClass(env, "java/lang/String");
+    if (!stringClass) {
+        free(batch);
+        return NULL;
+    }
+    result = (*env)->NewObjectArray(env, (jsize)total, stringClass, NULL);
+    if (!result) {
+        free(batch);
+        return NULL;
+    }
+
+    for (i = 0; i < count; ++i) {
+        const char *category = sdl_log_category_name(batch[i].category);
+        const char *priority = sdl_log_priority_name(batch[i].priority);
+        char prefix[64];
+        size_t length;
+        char *line;
+        jstring string;
+
+        if (category) {
+            SDL_snprintf(prefix, sizeof(prefix), "[SDL][%s][%s] ", category, priority);
+        } else {
+            SDL_snprintf(prefix, sizeof(prefix), "[SDL][cat%d][%s] ",
+                         batch[i].category, priority);
+        }
+        length = SDL_strlen(prefix) + SDL_strlen(batch[i].message) + 1;
+        line = (char *)malloc(length);
+        if (!line) {
+            continue;
+        }
+        SDL_snprintf(line, length, "%s%s", prefix, batch[i].message);
+        string = (*env)->NewStringUTF(env, line);
+        free(line);
+        if (string) {
+            (*env)->SetObjectArrayElement(env, result, (jsize)i, string);
+            (*env)->DeleteLocalRef(env, string);
+        }
+    }
+    if (dropped > 0) {
+        char summary[96];
+        jstring string;
+        SDL_snprintf(summary, sizeof(summary),
+                     "[SDL] %d message(s) dropped (capture buffer full)", dropped);
+        string = (*env)->NewStringUTF(env, summary);
+        if (string) {
+            (*env)->SetObjectArrayElement(env, result, (jsize)count, string);
+            (*env)->DeleteLocalRef(env, string);
+        }
+    }
+
+    free(batch);
+    return result;
+}
+
+JNIEXPORT void JNICALL
+Java_com_ifels_gamepadjni_SdlLogJNI_uninstallLogCapture(JNIEnv *env, jclass cls) {
+    SDL_LogOutputFunction current = NULL;
+    void *current_userdata = NULL;
+
+    (void)env; (void)cls;
+
+    if (!sdl_log_capture_installed) {
+        return;
+    }
+
+    /* Leave someone else's callback alone if the host replaced ours. */
+    SDL_GetLogOutputFunction(&current, &current_userdata);
+    if (current == gamepad_jni_log_capture) {
+        if (sdl_log_previous) {
+            SDL_SetLogOutputFunction(sdl_log_previous, sdl_log_previous_userdata);
+        } else {
+            SDL_SetLogOutputFunction(SDL_GetDefaultLogOutputFunction(), NULL);
+        }
+    }
+    if (sdl_log_previous_input_priority != SDL_LOG_PRIORITY_INVALID) {
+        SDL_SetLogPriority(SDL_LOG_CATEGORY_INPUT, sdl_log_previous_input_priority);
+    }
+    sdl_log_capture_installed = 0;
+
+    /* The mutex stays allocated: a callback already in flight on another
+     * thread may still be about to lock it, and one SDL_Mutex is cheaper than
+     * the lifetime dance needed to free it safely. */
+}
+
+/* ═══════════════════════════════════════════
  * SDL Init / Quit
  * ═══════════════════════════════════════════ */
 

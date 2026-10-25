@@ -303,6 +303,33 @@ Replace `<version>` with a release version (e.g. `0.8.7`). Check [JitPack](https
 
 JitPack builds the JAR from source on JDK 17 (still emitting Java 8 bytecode, see `build.gradle`). The resulting artifact includes Java classes and bundled native libraries for all supported platforms — no additional native compilation needed on the consumer side.
 
+## SDL log capture
+
+SDL's default filter is `app=info,assert=warn,test=verbose,*=error`, so the DEBUG
+lines that explain a degraded input backend — "Using udev for HIDAPI joystick
+device discovery", "Couldn't load libusb", "udev init failed, disabling udev
+integration" — never reach a logger. `GamepadManager` installs a capture through
+SDL's public log API (`SDL_SetLogOutputFunction`, SDL 3.2+), lowers only
+`SDL_LOG_CATEGORY_INPUT` to DEBUG, and forwards drained lines to the
+`gamepad-jni` logger at the level SDL assigned to them:
+
+```
+[SDL][input][DEBUG] Using udev for HIDAPI joystick device discovery
+```
+
+The messages that matter in practice are DEBUG, so they only appear when debug
+logging is enabled for `gamepad-jni`; real SDL warnings and errors keep their
+warn/error levels.
+
+The callback runs on whichever thread logged and never calls into the JVM: it
+copies into a 64-entry native ring buffer that Java drains from the poll thread
+and `updateGamepads()`. Identical messages are rate-limited to one report per
+10 seconds (with a suppressed-repeat count), because without libudev SDL retries
+HIDAPI initialization on every update and would otherwise flood the log. The
+bridge is diagnostics-only. Natives built before the entry points existed (or a
+host-provided SDL3, as on Android and `Sdl3Source.HOST`) leave it disabled, and
+the Java side catches `UnsatisfiedLinkError` rather than failing initialization.
+
 ## Creating a Release
 
 Use the release script to build, tag, and publish a GitHub Release (which JitPack picks up automatically):
