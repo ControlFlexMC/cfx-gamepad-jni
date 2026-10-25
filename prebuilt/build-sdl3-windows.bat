@@ -36,6 +36,9 @@ set "MSYS2_DIR=C:\msys64"
 set "SRC_ROOT=sdl\lwjgl-sdl-3.4.3"
 set "DST_ROOT=sdl\trimmed"
 set "VER_HDR=sdl\include\SDL3\SDL_version.h"
+REM The script pushes into prebuilt/, so the SDL checkout one level up is
+REM reached through REPO_DIR rather than a bare third_party\ path.
+set "REPO_DIR=%SCRIPT_DIR%.."
 
 REM Help is not an error; everything else that lands on :usage is one.
 set "USAGE_EXIT=1"
@@ -145,7 +148,7 @@ if not exist "%MSYS2_DIR%\usr\bin\bash.exe" (
     goto :done
 )
 
-if not exist "third_party\SDL\CMakeLists.txt" (
+if not exist "%REPO_DIR%\third_party\SDL\CMakeLists.txt" (
     echo ERROR: third_party\SDL is empty - the git submodule is not checked out.
     echo Run: git submodule update --init third_party/SDL
     set "EXITCODE=1"
