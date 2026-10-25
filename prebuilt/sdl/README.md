@@ -43,6 +43,16 @@ render, camera, and windowing backends are off; joystick/gamepad and sensor
 stay on. That is what ControlFlex actually calls, and it is about 2 MB smaller
 in the published JAR than a full LWJGL SDL3.
 
+**Windows is the exception.** The committed `windows-x86_64/SDL3.dll` and
+`windows-aarch64/SDL3.dll` are byte-identical copies of the official LWJGL
+3.4.3 binaries in `lwjgl-sdl-3.4.3/` — a full SDL3 build, not a trim. Two
+reasons: LWJGL's x86_64 Windows build is what Minecraft 26.3 already loads, and
+the aarch64 one cannot be produced here at all (`build-sdl3.sh` only builds
+x86_64 on Windows). `build-sdl3-windows.bat` therefore defaults to copying
+those DLLs into place; pass `--build` to compile a real MinGW trim from the
+submodule, which overwrites them. On macOS and Linux the trimmed libraries are
+genuine builds and the copy path is not used.
+
 CMake and Gradle always use this directory. Linking against the same binaries
 that are packaged means `libgamepadjni` cannot grow a dependency on a symbol
 that exists only in the full LWJGL build. `Sdl3Source.HOST` still works: the
@@ -62,9 +72,10 @@ matches by SONAME / `SDL3.dll` / `dynamic_lookup`, not by file identity.
 runtime `NativeLibraryLoader` extracts that path when the caller passes
 `Sdl3Source.BUNDLED`.
 
-Refreshing the binaries: run `prebuilt/build-sdl3.sh` (or
-`build-sdl3-windows.bat`) and commit the new files under `trimmed/`. Keep the
-file names in the table above.
+Refreshing the binaries: run `prebuilt/build-sdl3.sh` and commit the new files
+under `trimmed/`. On Windows, `prebuilt/build-sdl3-windows.bat` with no argument
+re-copies the official DLLs from `lwjgl-sdl-3.4.3/`; add `--build` to compile a
+trim instead. Keep the file names in the table above.
 
 ## `lwjgl-sdl-3.4.3/`
 

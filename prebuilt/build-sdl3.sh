@@ -4,6 +4,13 @@
 # Video, audio, rendering etc. are all disabled. No windowing backends needed.
 # Unified: macOS, Linux, Windows (MSYS2 MinGW64)
 #
+# NOTE (Windows): this script always compiles. The everyday Windows entry point
+# is build-sdl3-windows.bat, whose default mode copies the official SDL3.dll
+# out of prebuilt/sdl/lwjgl-sdl-3.4.3/ instead — the Windows files committed
+# under trimmed/ are exactly that copy, not a trim. Invoke this script directly
+# (or build-sdl3-windows.bat --build) when a real MinGW trim is wanted; it will
+# overwrite those copied DLLs.
+#
 # Build artifacts (linked by CMake and packaged into the JAR):
 #   macOS:
 #     prebuilt/sdl/trimmed/darwin-aarch64/libSDL3.0.dylib

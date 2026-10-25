@@ -131,6 +131,15 @@ chmod +x build-sdl3.sh
 
 This produces per-platform SDL3 binaries under `prebuilt/sdl/trimmed/<platform>/`, stripped down to only input subsystems (keyboard, mouse, joystick/gamepad, sensor). No audio, GPU, render, camera, or haptic subsystems are included. CMake links `libgamepadjni` against these files; Gradle copies them into the JAR.
 
+On Windows the everyday path is different — double-click
+`prebuilt/build-sdl3-windows.bat` (or run it with no arguments) and it **copies**
+`prebuilt/sdl/lwjgl-sdl-3.4.3/windows-*/SDL3.dll` into `trimmed/`, printing what
+it did. Those committed Windows DLLs are byte-identical to the official LWJGL
+3.4.3 SDL3 that Minecraft 26.3 loads, so there is nothing to trim by hand. Only
+`build-sdl3-windows.bat --build` enters MSYS2 MinGW64 and compiles a joystick-only
+SDL3 from `third_party/SDL`, which needs the submodule checked out and overwrites
+the copied DLLs.
+
 #### Linux: udev is required, libusb is a dlopen'd fallback
 
 The Linux build turns on three options the other platforms do not use:
@@ -374,7 +383,7 @@ cfx-gamepad-jni/
 │       └── ...                     # Supporting enums and types
 ├── prebuilt/
 │   ├── build-sdl3.sh                 # Script to build trimmed SDL3 (all platforms)
-│   ├── build-sdl3-windows.bat         # Windows launcher for build-sdl3.sh
+│   ├── build-sdl3-windows.bat         # Windows: copy official DLL by default, --build compiles
 │   ├── build-jni.sh                 # Script to build JNI native library (all platforms)
 │   ├── build-jni-windows.bat         # Windows launcher for build-jni.sh
 │   ├── jni/                        # Prebuilt JNI libraries (per platform)
