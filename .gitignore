@@ -1,4 +1,5 @@
 .DS_Store
+.workbuddy/
 
 # Compiled class file
 *.class
