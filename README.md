@@ -131,6 +131,45 @@ chmod +x build-sdl3.sh
 
 This produces per-platform SDL3 binaries under `prebuilt/sdl/trimmed/<platform>/`, stripped down to only input subsystems (keyboard, mouse, joystick/gamepad, sensor). No audio, GPU, render, camera, or haptic subsystems are included. CMake links `libgamepadjni` against these files; Gradle copies them into the JAR.
 
+#### Linux: udev is required, libusb is a dlopen'd fallback
+
+The Linux build turns on three options the other platforms do not use:
+
+```bash
+-DSDL_LIBUDEV=ON                 # hidraw enumeration
+-DSDL_HIDAPI_LIBUSB=ON           # optional fallback backend
+-DSDL_HIDAPI_LIBUSB_SHARED=ON    # ...loaded via dlopen, not linked
+```
+
+`SDL_LIBUDEV` is not an optional enhancement. `src/hidapi/SDL_hidapi_linux.h` wraps
+the entire hidraw backend — including `#include "linux/hid.c"` and
+`#define HAVE_PLATFORM_BACKEND 1` — in `#ifdef SDL_USE_LIBUDEV`. Disabling it removes
+every HIDAPI driver on Linux and leaves evdev as the only path in: DualShock/DualSense,
+Switch Pro and the Steam Controller stop being detected while SDL still reports a
+successful init. That is the failure mode to avoid — it is silent.
+
+`SDL_HIDAPI_LIBUSB_SHARED=ON` must be passed explicitly. The option is declared as
+`dep_option(..., ON, "SDL_HIDAPI_LIBUSB;SDL_DEPS_SHARED", OFF)` and this script sets
+`SDL_DEPS_SHARED=OFF`, so the default collapses to OFF and libusb gets linked directly.
+A `DT_NEEDED` entry turns a missing `libusb-1.0.so.0` on a user's machine into
+"libSDL3.so fails to load" instead of "libusb backend disabled". With `SHARED=ON`,
+SDL stores the soname and dlopens it from `src/misc/SDL_libusb.c`, exactly like udev.
+
+Both are dlopen'd, so a machine lacking either library still loads `libSDL3.so` and
+merely loses that backend: `SDL_InitLibUSB()` returns false, SDL logs `Couldn't load
+libusb` at debug level, and the platform backend carries on. That is also why macOS and
+Windows keep `-DSDL_HIDAPI_LIBUSB=OFF` — they already have native backends, and enabling
+it there would only add a library we do not ship.
+
+Build prerequisites (Debian/Ubuntu): `apt install libudev-dev libusb-1.0-0-dev`.
+Cross-compiling `aarch64` needs an arm64 `libudev-dev` in the sysroot, otherwise
+`check_include_file` silently drops the option.
+
+`verify_output_linux()` asserts the result: the shipped `.so` must contain
+`libudev.so.1` and `libusb-1.0.so.0`, and neither may appear in `DT_NEEDED`. A failing
+assertion aborts the build instead of producing a quietly broken artifact. Expected
+size afterwards: `linux-x86_64/libSDL3.so` ≈ 2.37–2.39 MB (≈ +30–40 KB in the JAR).
+
 ### Step 2: Build the JNI native library
 
 ```bash
@@ -263,6 +302,33 @@ dependencies {
 Replace `<version>` with a release version (e.g. `0.8.7`). Check [JitPack](https://jitpack.io/#ControlFlexMC/cfx-gamepad-jni) for available versions.
 
 JitPack builds the JAR from source on JDK 17 (still emitting Java 8 bytecode, see `build.gradle`). The resulting artifact includes Java classes and bundled native libraries for all supported platforms — no additional native compilation needed on the consumer side.
+
+## SDL log capture
+
+SDL's default filter is `app=info,assert=warn,test=verbose,*=error`, so the DEBUG
+lines that explain a degraded input backend — "Using udev for HIDAPI joystick
+device discovery", "Couldn't load libusb", "udev init failed, disabling udev
+integration" — never reach a logger. `GamepadManager` installs a capture through
+SDL's public log API (`SDL_SetLogOutputFunction`, SDL 3.2+), lowers only
+`SDL_LOG_CATEGORY_INPUT` to DEBUG, and forwards drained lines to the
+`gamepad-jni` logger at the level SDL assigned to them:
+
+```
+[SDL][input][DEBUG] Using udev for HIDAPI joystick device discovery
+```
+
+The messages that matter in practice are DEBUG, so they only appear when debug
+logging is enabled for `gamepad-jni`; real SDL warnings and errors keep their
+warn/error levels.
+
+The callback runs on whichever thread logged and never calls into the JVM: it
+copies into a 64-entry native ring buffer that Java drains from the poll thread
+and `updateGamepads()`. Identical messages are rate-limited to one report per
+10 seconds (with a suppressed-repeat count), because without libudev SDL retries
+HIDAPI initialization on every update and would otherwise flood the log. The
+bridge is diagnostics-only. Natives built before the entry points existed (or a
+host-provided SDL3, as on Android and `Sdl3Source.HOST`) leave it disabled, and
+the Java side catches `UnsatisfiedLinkError` rather than failing initialization.
 
 ## Creating a Release
 
