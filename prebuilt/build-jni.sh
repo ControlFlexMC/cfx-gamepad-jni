@@ -539,16 +539,11 @@ organize_output_windows() {
             done
         fi
 
-        # Strip x86_64 (MinGW embeds DWARF debug info). The ARM64 artifact is
-        # already stripped at link time with -Wl,-s; the host strip is an x86_64-only
-        # binutils build and cannot process an ARM64 image.
-        if [ "$arch" != "aarch64" ] && command -v strip &>/dev/null && [ -f "${install_arch_dir}/gamepadjni.dll" ]; then
-            local before_size after_size
-            before_size=$(wc -c < "${install_arch_dir}/gamepadjni.dll")
-            strip --strip-all "${install_arch_dir}/gamepadjni.dll"
-            after_size=$(wc -c < "${install_arch_dir}/gamepadjni.dll")
-            echo "  Stripped gamepadjni.dll: ${before_size} -> ${after_size} bytes"
-        fi
+        # No post-link strip here on purpose. Both Windows targets are stripped
+        # at link time (-Wl,-s, from CMake for x86_64 and from
+        # build_windows_aarch64 below), and binutils strip rewrites the COFF
+        # header with the current time - which would undo the reproducible
+        # output that -Wl,--no-insert-timestamp just bought us.
     done
 
     echo ""

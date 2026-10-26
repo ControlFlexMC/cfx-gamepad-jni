@@ -158,6 +158,21 @@ endif()
 # stated explicitly instead of relying on the toolchain's defaults.
 if(WIN32 AND NOT ANDROID)
     target_link_libraries(gamepadjni PRIVATE user32)
+
+    # Reproducible PE output. ld stamps the COFF header (0x88) and the export
+    # directory (0x4004) with the link time, then computes the PE checksum over
+    # the result, so two builds of identical sources differ in exactly those six
+    # bytes and every no-op rebuild turns into a binary diff in git. Zeroing the
+    # timestamp makes the output byte-identical run to run. MSVC spells this
+    # /Brepro. Only the native x86_64 target goes through CMake; the aarch64
+    # cross build is driven by build-jni.sh directly.
+    #
+    # -s matters for the same goal: stripping afterwards with binutils strip
+    # rewrites the COFF header and stamps a fresh timestamp over the zero one.
+    # Both are link-time options so the image leaves the linker final.
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_link_options(gamepadjni PRIVATE -Wl,--no-insert-timestamp -Wl,-s)
+    endif()
 endif()
 
 # macOS: link frameworks for GCController queries
