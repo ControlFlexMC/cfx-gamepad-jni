@@ -20,6 +20,15 @@ repositories {
     mavenCentral()
 }
 
+// Byte-for-byte reproducible archives: no file timestamps in the zip entries and
+// a fixed entry order, so rebuilding the same tag produces the same hash. The
+// build-natives workflow publishes a checksum file next to the JAR, and this is
+// what makes that checksum verifiable by anyone.
+tasks.withType(AbstractArchiveTask).configureEach {
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+
 dependencies {
     compileOnly 'org.apache.logging.log4j:log4j-api:2.20.0'
 
