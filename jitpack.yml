@@ -27,3 +27,7 @@ install:
 # after which the first JitPack request for that tag installs it.
 # If a request arrives before the release assets exist, the build fails; re-run
 # it from https://jitpack.io/#ControlFlexMC/cfx-gamepad-jni once CI finishes.
+#
+# Only release tags are supported. A commit hash or branch-SNAPSHOT has no
+# release assets, so the hook fails fast with an explanation instead of producing
+# a JAR without native libraries.

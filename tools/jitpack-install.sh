@@ -4,27 +4,46 @@
 #
 # Native libraries are build output and are not committed, so JitPack cannot
 # build the JAR itself. Instead this hook downloads the JAR that the
-# build-natives workflow attached to the GitHub release for the tag being built,
+# build-natives workflow attached to the GitHub release for the ref being built,
 # verifies it against the published checksums, and installs it into the local
 # Maven repository that JitPack serves from.
 #
-# JitPack sets VERSION to the ref it is building (a tag such as v0.9.5).
+# JitPack sets VERSION to the ref it is building. Release tags are the only
+# supported refs: a commit hash or branch-SNAPSHOT has no release assets, and
+# building the natives on JitPack is not possible (single Linux x86_64 host).
 
 set -euo pipefail
 
 : "${VERSION:?VERSION is not set — this script is meant to run inside JitPack}"
 
-TAG="${VERSION}"
 VER="${VERSION#v}"
 JAR="cfx-gamepad-jni-${VER}.jar"
-BASE="https://github.com/ControlFlexMC/cfx-gamepad-jni/releases/download/${TAG}"
+REPO="https://github.com/ControlFlexMC/cfx-gamepad-jni/releases/download"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
 
-echo "── fetching ${JAR} from ${TAG}"
-curl -fsSL -o "${WORK}/${JAR}" "${BASE}/${JAR}"
-curl -fsSL -o "${WORK}/checksums.txt" "${BASE}/checksums.txt"
+# JitPack passes the ref as requested: a dependency on 0.9.5 and one on v0.9.5
+# can arrive as either spelling, so try both before giving up.
+TAG=""
+for candidate in "${VERSION}" "v${VER}" "${VER}"; do
+    if curl -fsSL -o "${WORK}/${JAR}" "${REPO}/${candidate}/${JAR}" 2>/dev/null; then
+        TAG="${candidate}"
+        break
+    fi
+done
+
+if [ -z "${TAG}" ]; then
+    echo "No GitHub release found for '${VERSION}' (tried: ${VERSION}, v${VER}, ${VER})." >&2
+    if [[ "${VERSION}" =~ ^[0-9a-f]{7,40}$ ]]; then
+        echo "Commit builds are not supported: the native libraries only exist as release assets." >&2
+        echo "Depend on a release tag (for example 0.9.5) instead of a commit hash or branch-SNAPSHOT." >&2
+    fi
+    exit 1
+fi
+
+echo "── fetched ${JAR} from ${TAG}"
+curl -fsSL -o "${WORK}/checksums.txt" "${REPO}/${TAG}/checksums.txt"
 
 EXPECTED="$(awk -v jar="${JAR}" '$2 ~ jar"$" {print $1}' "${WORK}/checksums.txt" | head -1)"
 ACTUAL="$(sha256sum "${WORK}/${JAR}" | awk '{print $1}')"
@@ -39,9 +58,8 @@ if [ "${EXPECTED}" != "${ACTUAL}" ]; then
 fi
 echo "── verified ${JAR} (sha256 ${ACTUAL})"
 
-# Install under both the bare version (what the Gradle dependency string uses,
-# e.g. 0.9.5) and the tag as written (v0.9.5), so the coordinate resolves
-# whichever form JitPack looks up for this build.
+# Install under both spellings so the coordinate resolves whichever form JitPack
+# looks up for this build.
 for V in "${VER}" "${TAG}"; do
     mvn -q install:install-file \
         -Dfile="${WORK}/${JAR}" \
