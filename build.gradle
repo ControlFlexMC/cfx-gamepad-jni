@@ -188,7 +188,7 @@ tasks.register('verifyNativeSymbols') {
         def platformDirs = file('prebuilt/jni').listFiles()
                 ?.findAll { it.isDirectory() && it.name != 'build' }
         if (platformDirs == null || platformDirs.isEmpty()) {
-            throw new GradleException('prebuilt/jni is empty — no JNI binaries to verify')
+            throw new GradleException('prebuilt/jni is empty. Build the natives first: cd prebuilt && ./build-jni.sh --all (CI runs this in the build-natives workflow).')
         }
 
         platformDirs.sort { it.name }.each { dir ->

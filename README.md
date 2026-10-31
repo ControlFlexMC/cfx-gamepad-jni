@@ -115,8 +115,8 @@ instance with no launcher glue, which can never see a gamepad.
 Build the Android natives with `prebuilt/build-jni-android.sh` (needs the Android
 NDK); SDL3 at link time is fetched from the official `SDL3-devel-3.4.14-android`
 release into `prebuilt/link-only/`, which is gitignored and never packaged. The
-resulting `.so` files are committed, because JitPack only zips what is already in
-`prebuilt/`.
+resulting `.so` files are not committed either — see
+[Who owns `prebuilt/`](#who-owns-prebuilt) below.
 
 ### Step 1: Build trimmed SDL3 (link + JAR)
 
@@ -134,7 +134,7 @@ This produces per-platform SDL3 binaries under `prebuilt/sdl/trimmed/<platform>/
 On Windows the everyday path is different — double-click
 `prebuilt/build-sdl3-windows.bat` (or run it with no arguments) and it **copies**
 `prebuilt/sdl/lwjgl-sdl-3.4.3/windows-*/SDL3.dll` into `trimmed/`, printing what
-it did. Those committed Windows DLLs are byte-identical to the official LWJGL
+it did. Those DLLs are byte-identical to the official LWJGL
 3.4.3 SDL3 that Minecraft 26.3 loads, so there is nothing to trim by hand. Only
 `build-sdl3-windows.bat --build` enters MSYS2 MinGW64 and compiles a joystick-only
 SDL3 from `third_party/SDL`, which needs the submodule checked out and overwrites
@@ -200,6 +200,26 @@ cd prebuilt
 ./build-jni.sh --all          # every architecture this host can produce
 ./build-jni.sh --arch aarch64 # cross-compile windows-aarch64 (Windows hosts)
 ```
+
+### Who owns `prebuilt/`
+
+Everything under `prebuilt/jni/` and `prebuilt/sdl/trimmed/` is build output and is
+**not** committed. Run the scripts above freely while iterating — locally produced
+libraries live only on your disk.
+
+Releases are built by the `build natives` workflow on GitHub-hosted runners, which
+compiles every platform, packages the JAR and attaches it (with `checksums.txt`) to
+the GitHub release for the tag.
+
+JitPack does not build natives: its install hook downloads that released JAR,
+verifies the SHA-256 against the published checksums and installs it into the local
+Maven repository it serves from (`jitpack.yml` → `tools/jitpack-install.sh`). The
+artifact behind `com.github.ControlFlexMC:cfx-gamepad-jni` is therefore the exact
+JAR CI produced.
+
+`prebuilt/sdl/lwjgl-sdl-3.4.3/` is the exception: it holds the upstream SDL 3.4.14
+binaries used as build input for the Windows copy step, and it is committed on
+purpose.
 
 #### Windows one-shot: `build-jni-windows.bat`
 

@@ -2,8 +2,12 @@ name: build natives
 
 # Builds every packaged native library from source on GitHub-hosted runners, then
 # packages the release JAR from those freshly built files. Tag pushes attach the
-# JAR to the GitHub release, so the bytes a host publishes can be traced back to a
-# specific run of this workflow.
+# JAR and a checksums file to the GitHub release.
+#
+# Native libraries are not committed. JitPack serves the Maven artifact by
+# downloading that released JAR and installing it verbatim (jitpack.yml →
+# tools/jitpack-install.sh), so the bytes behind the Maven coordinate are the ones
+# this workflow built.
 #
 # Coverage is a matrix of native runners, not one cross-compiling host:
 #
@@ -180,10 +184,11 @@ jobs:
           merge-multiple: true
           path: staging
 
-      # Overwrite the committed prebuilts with the ones this run built, so the
-      # JAR contains CI output rather than whatever was last committed locally.
+      # The natives are not in the repository, so the JAR is assembled purely from
+      # what the matrix jobs just produced.
       - name: Install built natives
         run: |
+          mkdir -p prebuilt/jni prebuilt/sdl/trimmed
           cp -a staging/jni/. prebuilt/jni/
           cp -a staging/sdl/trimmed/. prebuilt/sdl/trimmed/
           find prebuilt/jni prebuilt/sdl/trimmed -type f \
@@ -203,10 +208,6 @@ jobs:
             sha256sum build/libs/*.jar
           } > checksums.txt
           cat checksums.txt
-
-      - name: Report drift against committed prebuilts
-        continue-on-error: true
-        run: git status --short prebuilt/
 
       - uses: actions/upload-artifact@v4
         with:

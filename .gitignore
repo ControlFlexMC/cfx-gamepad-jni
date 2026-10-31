@@ -56,3 +56,10 @@ prebuilt/jni/build-android/
 
 # SDL trimmed-build cmake cache
 prebuilt/sdl/build/
+
+# Native build output. Produced by prebuilt/build-*.sh locally and by the
+# build-natives workflow in CI; never committed. JitPack installs the JAR
+# attached to the GitHub release instead of building natives itself (see
+# jitpack.yml and tools/jitpack-install.sh).
+prebuilt/jni/
+prebuilt/sdl/trimmed/
