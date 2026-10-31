@@ -62,9 +62,17 @@ jobs:
         with:
           name: natives-linux-${{ matrix.arch }}
           if-no-files-found: error
+          # Anchor every artifact at prebuilt/ so all jobs produce the same
+          # internal layout (jni/..., sdl/trimmed/...). Uploading individual
+          # subdirectories makes the artifact root depend on whichever paths
+          # match, which silently dropped the Android libraries once.
           path: |
-            prebuilt/jni/linux-${{ matrix.arch }}
-            prebuilt/sdl/trimmed/linux-${{ matrix.arch }}
+            prebuilt/**
+            !prebuilt/jni/build/**
+            !prebuilt/link-only/**
+            !prebuilt/sdl/build/**
+            !prebuilt/sdl/include/**
+            !prebuilt/sdl/lwjgl-sdl-3.4.3/**
 
   macos:
     name: darwin (arm64 + x86_64)
@@ -85,10 +93,12 @@ jobs:
           name: natives-macos
           if-no-files-found: error
           path: |
-            prebuilt/jni/darwin-aarch64
-            prebuilt/jni/darwin-x86_64
-            prebuilt/sdl/trimmed/darwin-aarch64
-            prebuilt/sdl/trimmed/darwin-x86_64
+            prebuilt/**
+            !prebuilt/jni/build/**
+            !prebuilt/link-only/**
+            !prebuilt/sdl/build/**
+            !prebuilt/sdl/include/**
+            !prebuilt/sdl/lwjgl-sdl-3.4.3/**
 
   windows:
     name: windows (x86_64 + aarch64)
@@ -127,7 +137,22 @@ jobs:
 
       - name: Build JNI library (x86_64 + aarch64)
         shell: msys2 {0}
-        run: cd prebuilt && ./build-jni.sh --all
+        run: |
+          # `--all` silently skips windows-aarch64 when no cross compiler is on
+          # PATH, which shipped a JAR without that DLL once. Make zig visible and
+          # fail loudly if it is missing.
+          export PATH="/c/ProgramData/chocolatey/bin:${PATH}"
+          command -v zig >/dev/null || { echo "::error::zig is not on PATH"; exit 1; }
+          zig version
+          cd prebuilt && ./build-jni.sh --all
+
+      - name: Verify both Windows architectures were built
+        shell: bash
+        run: |
+          for f in prebuilt/jni/windows-x86_64/gamepadjni.dll prebuilt/jni/windows-aarch64/gamepadjni.dll; do
+            [ -s "$f" ] || { echo "::error::missing $f"; exit 1; }
+            ls -l "$f"
+          done
 
       - uses: actions/upload-artifact@v4
         with:
@@ -161,9 +186,10 @@ jobs:
           name: natives-android
           if-no-files-found: error
           path: |
-            prebuilt/jni/android-arm64-v8a
-            prebuilt/jni/android-armeabi-v7a
-            prebuilt/jni/android-x86_64
+            prebuilt/**
+            !prebuilt/jni/build/**
+            !prebuilt/link-only/**
+            !prebuilt/sdl/**
 
   package:
     name: package jar
@@ -193,6 +219,30 @@ jobs:
           cp -a staging/sdl/trimmed/. prebuilt/sdl/trimmed/
           find prebuilt/jni prebuilt/sdl/trimmed -type f \
             \( -name '*.dll' -o -name '*.so' -o -name '*.dylib' \) | sort
+
+      # A missing platform used to sail through: upload-artifact only fails when a
+      # job produces no files at all, so one absent library produced a JAR that
+      # silently lacked a platform. Refuse to package an incomplete set.
+      - name: Verify every platform is present
+        run: |
+          fail=0
+          for p in darwin-aarch64 darwin-x86_64 linux-aarch64 linux-x86_64 \
+                   windows-x86_64 windows-aarch64 \
+                   android-arm64-v8a android-armeabi-v7a android-x86_64; do
+            if ! ls prebuilt/jni/"$p"/* >/dev/null 2>&1; then
+              echo "::error::no JNI library for $p"
+              fail=1
+            fi
+          done
+          for p in darwin-aarch64 darwin-x86_64 linux-aarch64 linux-x86_64 \
+                   windows-x86_64 windows-aarch64; do
+            if ! ls prebuilt/sdl/trimmed/"$p"/* >/dev/null 2>&1; then
+              echo "::error::no SDL3 library for $p"
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ] || exit 1
+          find prebuilt/jni prebuilt/sdl/trimmed -type f | sort
 
       # jar depends on verifyNativeSymbols, which fails if any packaged native is
       # missing an entry point declared in GamepadJNI.java.
