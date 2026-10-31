@@ -1,0 +1,229 @@
+name: build natives
+
+# Builds every packaged native library from source on GitHub-hosted runners, then
+# packages the release JAR from those freshly built files. Tag pushes attach the
+# JAR to the GitHub release, so the bytes a host publishes can be traced back to a
+# specific run of this workflow.
+#
+# Coverage is a matrix of native runners, not one cross-compiling host:
+#
+#   linux-x86_64    ubuntu-24.04      gcc, native
+#   linux-aarch64   ubuntu-24.04-arm  gcc, native
+#   darwin-*        macos-14          clang; --all emits arm64 + x86_64
+#   windows-*       windows-latest    MSYS2 MinGW x86_64; aarch64 cross-compiled by zig
+#   android-*       ubuntu-24.04      NDK; libgamepadjni.so only, SDL3 comes from the launcher APK
+#
+# SDL3 on Windows stays the official upstream 3.4.14 DLL copied by
+# build-sdl3-windows.bat (byte-for-byte what LWJGL 3.4.3 ships). Every other
+# platform compiles SDL3 from the pinned third_party/SDL submodule.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    name: linux-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake libudev-dev libusb-1.0-0-dev
+
+      - name: Build trimmed SDL3
+        run: ./prebuilt/build-sdl3.sh --arch ${{ matrix.arch }}
+
+      - name: Build JNI library
+        run: ./prebuilt/build-jni.sh --arch ${{ matrix.arch }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: natives-linux-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            prebuilt/jni/linux-${{ matrix.arch }}
+            prebuilt/sdl/trimmed/linux-${{ matrix.arch }}
+
+  macos:
+    name: darwin (arm64 + x86_64)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build trimmed SDL3 (both archs)
+        run: ./prebuilt/build-sdl3.sh --all
+
+      - name: Build JNI library (both archs)
+        run: ./prebuilt/build-jni.sh --all
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: natives-macos
+          if-no-files-found: error
+          path: |
+            prebuilt/jni/darwin-aarch64
+            prebuilt/jni/darwin-x86_64
+            prebuilt/sdl/trimmed/darwin-aarch64
+            prebuilt/sdl/trimmed/darwin-x86_64
+
+  windows:
+    name: windows (x86_64 + aarch64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Default mode of the script: copies the official SDL 3.4.14 DLLs out of
+      # prebuilt/sdl/lwjgl-sdl-3.4.3. Pass --build here instead if a real MinGW
+      # trim of SDL3 is ever wanted for Windows.
+      - name: Stage SDL3 (official upstream binaries)
+        shell: cmd
+        run: prebuilt\build-sdl3-windows.bat --copy
+
+      - name: Install zig for the aarch64 cross build
+        shell: pwsh
+        run: |
+          choco install zig -y --no-progress
+          "C:\ProgramData\chocolatey\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            make
+
+      - name: Build JNI library (x86_64 + aarch64)
+        shell: msys2 {0}
+        run: cd prebuilt && ./build-jni.sh --all
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: natives-windows
+          if-no-files-found: error
+          path: |
+            prebuilt/jni/windows-x86_64
+            prebuilt/jni/windows-aarch64
+            prebuilt/sdl/trimmed/windows-x86_64
+            prebuilt/sdl/trimmed/windows-aarch64
+
+  android:
+    name: android (3 ABIs)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Build JNI libraries
+        run: |
+          export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          echo "NDK: ${ANDROID_NDK_HOME}"
+          ./prebuilt/build-jni-android.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: natives-android
+          if-no-files-found: error
+          path: |
+            prebuilt/jni/android-arm64-v8a
+            prebuilt/jni/android-armeabi-v7a
+            prebuilt/jni/android-x86_64
+
+  package:
+    name: package jar
+    needs: [linux, macos, windows, android]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: natives-*
+          merge-multiple: true
+          path: staging
+
+      # Overwrite the committed prebuilts with the ones this run built, so the
+      # JAR contains CI output rather than whatever was last committed locally.
+      - name: Install built natives
+        run: |
+          cp -a staging/jni/. prebuilt/jni/
+          cp -a staging/sdl/trimmed/. prebuilt/sdl/trimmed/
+          find prebuilt/jni prebuilt/sdl/trimmed -type f \
+            \( -name '*.dll' -o -name '*.so' -o -name '*.dylib' \) | sort
+
+      # jar depends on verifyNativeSymbols, which fails if any packaged native is
+      # missing an entry point declared in GamepadJNI.java.
+      - name: Build jar
+        run: ./gradlew --no-daemon clean jar
+
+      - name: Checksums
+        run: |
+          {
+            find prebuilt/jni prebuilt/sdl/trimmed -type f \
+              \( -name '*.dll' -o -name '*.so' -o -name '*.dylib' \) \
+              -exec sha256sum {} + | sort
+            sha256sum build/libs/*.jar
+          } > checksums.txt
+          cat checksums.txt
+
+      - name: Report drift against committed prebuilts
+        continue-on-error: true
+        run: git status --short prebuilt/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-jar
+          if-no-files-found: error
+          path: |
+            build/libs/*.jar
+            checksums.txt
+
+      - name: Attach to the GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 \
+            || gh release create "${GITHUB_REF_NAME}" \
+                 --title "${GITHUB_REF_NAME}" \
+                 --notes "Built by GitHub Actions from ${GITHUB_SHA} (run ${GITHUB_RUN_ID})."
+          gh release upload "${GITHUB_REF_NAME}" \
+            build/libs/*.jar checksums.txt --clobber
