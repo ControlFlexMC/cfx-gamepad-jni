@@ -207,6 +207,12 @@ jobs:
   android:
     name: android (3 ABIs)
     runs-on: ubuntu-24.04
+    env:
+      # Pin the NDK explicitly. The runner image presets ANDROID_NDK_ROOT, and
+      # build-jni-android.sh trusts it, so without this the version compiled into
+      # the JAR is whichever NDK the image happened to ship that week — silently.
+      # A missing pin is a loud failure, which is what we want.
+      ANDROID_NDK_ROOT: /usr/local/lib/android/sdk/ndk/27.3.13750724
     steps:
       - uses: actions/checkout@v4
 
@@ -217,8 +223,12 @@ jobs:
 
       - name: Build JNI libraries
         run: |
-          export ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
-          echo "NDK: ${ANDROID_NDK_HOME}"
+          [ -d "$ANDROID_NDK_ROOT" ] || {
+            echo "::error::pinned NDK is gone: $ANDROID_NDK_ROOT"
+            echo "Available:"; ls /usr/local/lib/android/sdk/ndk || true
+            exit 1
+          }
+          echo "NDK: $ANDROID_NDK_ROOT"
           ./prebuilt/build-jni-android.sh
 
       - uses: actions/upload-artifact@v4
