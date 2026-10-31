@@ -741,6 +741,21 @@ Java_com_ifels_gamepadjni_GamepadJNI_SDL_1GamepadConnected(JNIEnv *env, jclass c
 JNIEXPORT void JNICALL
 Java_com_ifels_gamepadjni_GamepadJNI_SDL_1UpdateGamepads(JNIEnv *env, jclass cls) {
     (void)env; (void)cls;
+#if defined(__linux__) && !defined(__ANDROID__)
+    /* Linux + libudev: SDL's joystick driver only dispatches device add/remove
+     * from the SDL event loop (SDL_PumpEvents -> SDL_UDEV_Poll); its Detect()
+     * is a no-op in udev enumeration mode ("polling will happen in the main
+     * event loop"). This library has no event loop of its own, so a device
+     * attached while the process is running would never be discovered. When
+     * the caller is on the SDL main thread (the render/client tick), pump the
+     * event loop; the background poll thread takes the plain update path.
+     * Android is excluded: its SDL comes from the launcher APK, which owns the
+     * event loop. */
+    if (SDL_IsMainThread()) {
+        SDL_PumpEvents();
+        return;
+    }
+#endif
     SDL_UpdateGamepads();
 }
 

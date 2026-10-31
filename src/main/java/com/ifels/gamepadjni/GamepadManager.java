@@ -52,6 +52,10 @@ public class GamepadManager {
     private static final boolean IS_MAC =
             System.getProperty("os.name", "").toLowerCase().contains("mac");
 
+    /** Cached OS check to avoid repeated string operations. */
+    private static final boolean IS_LINUX =
+            System.getProperty("os.name", "").toLowerCase().contains("linux");
+
     private static final Object LOCK = new Object();
     private static volatile GamepadManager instance;
 
@@ -694,8 +698,12 @@ public class GamepadManager {
      * ensuring thread-safety with GCController/IOKit callbacks
      * bound to the main thread's CFRunLoop.</p>
      *
-     * <p>On Windows/Linux, SDL polling runs on the background poll thread;
-     * this method does nothing there to avoid duplicate SDL calls.</p>
+     * <p>On Linux, this dispatches udev hotplug: the native entry point pumps
+     * SDL's event loop when it runs on the SDL main thread, and only
+     * {@code SDL_PumpEvents()} dispatches device add/remove with udev
+     * enumeration. The background poll thread calls the same entry point and
+     * gets the plain {@code SDL_UpdateGamepads()} path. On Windows the poll
+     * thread already handles polling, so this method does nothing.</p>
      */
     public void updateGamepads() {
         if (!initialized) return;
@@ -705,6 +713,11 @@ public class GamepadManager {
         drainSdlLogs();
 
         if (!IS_MAC) {
+            // Desktop Linux only; os.name reports "Linux" on Android too, where
+            // the launcher APK owns SDL's event loop.
+            if (IS_LINUX && !AndroidPlatform.isAndroid()) {
+                GamepadJNI.SDL_UpdateGamepads();
+            }
             return;
         }
 
