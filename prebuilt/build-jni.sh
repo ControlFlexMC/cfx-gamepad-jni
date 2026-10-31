@@ -579,11 +579,16 @@ verify_output() {
         Linux)
             for sofile in "${INSTALL_DIR}"/linux-*/libgamepadjni.so; do
                 if [ -f "${sofile}" ]; then
+                    # CI builds each architecture on its own runner, so the install
+                    # directory can also hold the library for the other
+                    # architecture. ldd exits non-zero on a foreign-arch file
+                    # ("not a dynamic executable") and `set -o pipefail` would turn
+                    # that into a failed build; the listing is informational only.
                     echo "Dependencies of $(basename "$(dirname "$sofile")")/libgamepadjni.so:"
                     if command -v ldd &>/dev/null; then
-                        ldd "${sofile}" | sed 's/^/  /'
+                        ldd "${sofile}" 2>&1 | sed 's/^/  /' || true
                     elif command -v objdump &>/dev/null; then
-                        objdump -p "${sofile}" 2>/dev/null | grep NEEDED | sed 's/^/  /'
+                        { objdump -p "${sofile}" 2>/dev/null | grep NEEDED | sed 's/^/  /'; } || true
                     fi
                     break
                 fi
