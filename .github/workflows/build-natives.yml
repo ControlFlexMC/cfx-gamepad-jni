@@ -42,9 +42,9 @@ jobs:
     container:
       image: ${{ matrix.image }}
     # Container jobs do not inherit the runner's toolcache JDK, and the JNI build
-    # needs jni.h from one.
+    # needs jni.h from one. The package name differs per architecture.
     env:
-      JAVA_HOME: /usr/lib/jvm/java-11-openjdk-amd64
+      JAVA_HOME: ${{ matrix.jdk }}
     strategy:
       fail-fast: false
       matrix:
@@ -52,9 +52,11 @@ jobs:
           - runner: ubuntu-24.04
             image: ubuntu:20.04
             arch: x86_64
+            jdk: /usr/lib/jvm/java-11-openjdk-amd64
           - runner: ubuntu-24.04-arm
             image: arm64v8/ubuntu:20.04
             arch: aarch64
+            jdk: /usr/lib/jvm/java-11-openjdk-arm64
     steps:
       # The image has no git, and checkout runs inside the container, so this has
       # to come first. ForceIPv4: Docker's default network hangs on the IPv6
@@ -88,10 +90,13 @@ jobs:
           lib="prebuilt/sdl/trimmed/linux-${{ matrix.arch }}/libSDL3.so"
           highest=$(objdump -T "$lib" | grep -o 'GLIBC_[0-9.]*' | sort -V | tail -1)
           echo "$lib requires $highest"
-          if [ "$highest" != "$(printf '%s\n%s\n' "$highest" 'GLIBC_2.31' | sort -V | tail -1)" ]; then
+          # sort -V puts the larger of the two last: if that is the library's
+          # requirement rather than the floor, the library is too new.
+          if [ "$(printf '%s\n%s\n' "$highest" 'GLIBC_2.31' | sort -V | tail -1)" != "GLIBC_2.31" ]; then
             echo "::error::$lib needs $highest, which is newer than the GLIBC_2.31 floor"
             exit 1
           fi
+          echo "ok — at or below the 2.31 floor"
 
       - uses: actions/upload-artifact@v4
         with:
