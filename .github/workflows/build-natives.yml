@@ -53,12 +53,17 @@ jobs:
             arch: aarch64
     steps:
       # The image has no git, and checkout runs inside the container, so this has
-      # to come first.
+      # to come first. ForceIPv4: Docker's default network hangs on the IPv6
+      # route to the Ubuntu archives, which stalls apt-get update indefinitely.
       - name: Install build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            git ca-certificates build-essential cmake libudev-dev libusb-1.0-0-dev
+          apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=5 \
+                  -o Acquire::http::Timeout=30 update
+          apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=5 \
+                  -o Acquire::http::Timeout=30 install -y --no-install-recommends \
+                  git ca-certificates build-essential cmake libudev-dev libusb-1.0-0-dev
 
       - uses: actions/checkout@v4
         with:
