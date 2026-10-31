@@ -41,6 +41,10 @@ jobs:
     runs-on: ${{ matrix.runner }}
     container:
       image: ${{ matrix.image }}
+    # Container jobs do not inherit the runner's toolcache JDK, and the JNI build
+    # needs jni.h from one.
+    env:
+      JAVA_HOME: /usr/lib/jvm/java-11-openjdk-amd64
     strategy:
       fail-fast: false
       matrix:
@@ -63,7 +67,8 @@ jobs:
                   -o Acquire::http::Timeout=30 update
           apt-get -o Acquire::ForceIPv4=true -o Acquire::Retries=5 \
                   -o Acquire::http::Timeout=30 install -y --no-install-recommends \
-                  git ca-certificates build-essential cmake libudev-dev libusb-1.0-0-dev
+                  git ca-certificates build-essential cmake libudev-dev \
+                  libusb-1.0-0-dev openjdk-11-jdk-headless
 
       - uses: actions/checkout@v4
         with:
