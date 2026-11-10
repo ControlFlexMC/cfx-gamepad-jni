@@ -542,9 +542,25 @@ organize_output_windows() {
         # No post-link strip here on purpose. Both Windows targets are stripped
         # at link time (-Wl,-s, from CMake for x86_64 and from
         # build_windows_aarch64 below), and binutils strip rewrites the COFF
-        # header with the current time - which would undo the reproducible
-        # output that -Wl,--no-insert-timestamp just bought us.
+        # header with the current time.
     done
+
+    # Stamp the PE timestamp. ld writes zero and lld writes a hash, and neither
+    # can be told "use this exact value", so the shipped bytes are fixed up here
+    # instead - one value for both architectures, derived from SOURCE_DATE_EPOCH.
+    # A stable value per release is also what lets SAC/Defender reputation
+    # accumulate against a single file hash; see patch-pe-timestamp.py.
+    local patcher="${GAMEPAD_JNI_ROOT}/prebuilt/patch-pe-timestamp.py"
+    local py
+    for py in python3 python; do
+        command -v "$py" >/dev/null && break
+        py=""
+    done
+    if [ -z "$py" ]; then
+        echo "Error: python3/python not found; needed to stamp PE timestamps"
+        exit 1
+    fi
+    "$py" "$patcher" "${INSTALL_DIR}"/windows-*/gamepadjni.dll || exit 1
 
     echo ""
     echo "Artifacts organized"
@@ -607,6 +623,43 @@ verify_output() {
             if command -v objdump &>/dev/null && [ -f "${INSTALL_DIR}/windows-x86_64/gamepadjni.dll" ]; then
                 echo "windows-x86_64 DLL dependencies:"
                 objdump -p "${INSTALL_DIR}/windows-x86_64/gamepadjni.dll" 2>/dev/null | grep "DLL Name" | sed 's/^/  /' || true
+            fi
+
+            # The PE timestamp is written by patch-pe-timestamp.py, not by the
+            # linker. Assert it landed and that both architectures agree: zero is
+            # what ld produces, a 2048 date is what lld produces, and either means
+            # the patch step was skipped.
+            local py
+            for py in python3 python; do
+                command -v "$py" >/dev/null && break
+                py=""
+            done
+            if [ -n "$py" ]; then
+                "$py" - "${INSTALL_DIR}" <<'PYEOF' || exit 1
+import glob, os, struct, sys, time
+
+install = sys.argv[1]
+values = {}
+for path in sorted(glob.glob(os.path.join(install, 'windows-*', 'gamepadjni.dll'))):
+    with open(path, 'rb') as handle:
+        data = handle.read()
+    pe = struct.unpack_from('<I', data, 0x3c)[0]
+    values[path] = struct.unpack_from('<I', data, pe + 8)[0]
+
+if not values:
+    sys.exit('verify: no Windows DLLs found under ' + install)
+
+limit = int(time.time()) + 86400
+for path, stamp in sorted(values.items()):
+    print('  PE timestamp %s: %d' % (path, stamp))
+    if stamp == 0:
+        sys.exit('verify: PE timestamp is zero - patch-pe-timestamp.py did not run')
+    if stamp > limit:
+        sys.exit('verify: PE timestamp is in the future - patch-pe-timestamp.py used the wrong value')
+
+if len(set(values.values())) > 1:
+    sys.exit('verify: Windows DLLs carry different PE timestamps')
+PYEOF
             fi
             ;;
     esac

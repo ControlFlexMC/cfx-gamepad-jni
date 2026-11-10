@@ -170,6 +170,13 @@ if(WIN32 AND NOT ANDROID)
     # -s matters for the same goal: stripping afterwards with binutils strip
     # rewrites the COFF header and stamps a fresh timestamp over the zero one.
     # Both are link-time options so the image leaves the linker final.
+    #
+    # The zero left here is not what ships: prebuilt/patch-pe-timestamp.py writes
+    # one fixed value (SOURCE_DATE_EPOCH, else the HEAD commit time) into both the
+    # COFF header and the export directory before packaging. Zeroing keeps the
+    # link deterministic; the patch keeps the published DLL identical across every
+    # machine that builds the same tag - the SAC/Defender reputation of a file is
+    # keyed on its hash, so a per-build timestamp would restart it every time.
     if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         target_link_options(gamepadjni PRIVATE -Wl,--no-insert-timestamp -Wl,-s)
     endif()
