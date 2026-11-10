@@ -18,7 +18,7 @@
  * This is a 'direct query' - it does NOT depend on NSNotification delivery.
  */
 JNIEXPORT jint JNICALL
-Java_com_ifels_gamepadjni_GamepadJNI_getGCControllerCount(JNIEnv *env, jclass cls) {
+Java_com_ifels_gamepadjni_JniGamepad_getGCControllerCount(JNIEnv *env, jclass cls) {
     (void)env;
     (void)cls;
     @autoreleasepool {

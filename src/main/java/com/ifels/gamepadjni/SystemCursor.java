@@ -63,7 +63,7 @@ public final class SystemCursor {
             return null;
         }
         try {
-            return Integer.valueOf(SystemCursorJNI.showCursor(hidden));
+            return Integer.valueOf(Bindings.b().showCursor(hidden));
         } catch (UnsatisfiedLinkError e) {
             // Older jar, or a Windows binary that was never rebuilt with the entry
             // point: report once, then stop trying. Losing the cursor feature must

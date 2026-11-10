@@ -141,7 +141,7 @@ tasks.named('test') {
 // SDL_WasInit/SDL_QuitSubSystem (see ControlFlex
 // issue/gamepad-jni-stale-natives/root-cause-analysis.md).
 
-def jniSymbolFor = { String method -> 'Java_com_ifels_gamepadjni_GamepadJNI_' + method.replace('_', '_1') }
+def jniSymbolFor = { String method -> 'Java_com_ifels_gamepadjni_JniGamepad_' + method.replace('_', '_1') }
 
 def collectNativeMethods = { File sourceFile, String regex ->
     def names = []
@@ -158,7 +158,7 @@ def collectNativeMethods = { File sourceFile, String regex ->
 
 // Methods declared in Java: `public static native <type> name(`
 def declaredNativeMethods = {
-    collectNativeMethods(file('src/main/java/com/ifels/gamepadjni/GamepadJNI.java'),
+    collectNativeMethods(file('src/main/java/com/ifels/gamepadjni/JniGamepad.java'),
             /public\s+static\s+native\s+[\w\[\]<>.]+\s+(\w+)\s*\(/)
 }
 
@@ -168,20 +168,9 @@ def darwinOnlyMethods = {
             /Java_com_ifels_gamepadjni_GamepadJNI_(\w+)\s*\(/)
 }
 
-// Every packaged platform is now built from the current C source, so drift fails
-// the build outright. The linux-x86_64 / linux-aarch64 exemptions that tracked
-// the stale 0.10.x natives (ControlFlex
-// issue/gamepad-jni-stale-natives/root-cause-analysis.md) were removed once those
-// binaries were rebuilt.
-//
-// SDL_GetVersion is in C and in the Android + Darwin natives. Linux/Windows
-// binaries have not been rebuilt yet; Java callers already catch
-// UnsatisfiedLinkError. Drop this list when those natives are rebuilt.
-def getVersionPendingPlatforms = [
-        'linux-x86_64', 'linux-aarch64',
-        'windows-x86_64', 'windows-aarch64',
-] as Set
-
+// Every packaged platform is built from the current C source, so drift fails the
+// build outright. The per-platform exemptions that tracked stale 0.10.x natives
+// were removed once those binaries were rebuilt.
 tasks.register('verifyNativeSymbols') {
     group = 'verification'
     description = 'Fails when a packaged native library lacks an entry point declared in GamepadJNI.java'
@@ -192,6 +181,9 @@ tasks.register('verifyNativeSymbols') {
 
     doLast {
         def allMethods = declaredNativeMethods()
+        if (allMethods.isEmpty()) {
+            throw new GradleException('verifyNativeSymbols: parsed 0 native methods from JniGamepad.java — the scanner is broken')
+        }
         def darwinOnly = darwinOnlyMethods()
         def failures = []
         int platforms = 0
@@ -216,8 +208,7 @@ tasks.register('verifyNativeSymbols') {
 
             boolean isDarwin = dir.name.startsWith('darwin')
             def required = allMethods.findAll { m ->
-                (isDarwin || !darwinOnly.contains(m)) &&
-                        !(m == 'SDL_GetVersion' && getVersionPendingPlatforms.contains(dir.name))
+                isDarwin || !darwinOnly.contains(m)
             }
             // Symbol names live in the export table as plain ASCII, so a byte scan
             // over the binary is enough to detect a binary that was never rebuilt.
