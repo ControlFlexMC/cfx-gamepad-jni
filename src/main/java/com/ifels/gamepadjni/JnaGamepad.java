@@ -109,6 +109,5 @@ final class JnaGamepad {
     public static native byte SDL_GamepadSensorEnabled(Pointer gamepad, int type);
     public static native float SDL_GetGamepadSensorDataRate(Pointer gamepad, int type);
     public static native byte SDL_GetGamepadSensorData(Pointer gamepad, int type, float[] data, int numValues);
-    public static native int getGCControllerCount();
     public static native void SDL_free(Pointer p);
 }

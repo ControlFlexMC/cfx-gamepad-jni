@@ -442,7 +442,11 @@ final class JnaBinding implements GamepadBinding {
     }
     @Override
     public int getGCControllerCount() {
-        return JnaGamepad.getGCControllerCount();
+        // Our own macOS helper, not an SDL3 export: it cannot be bound here, and
+        // Native.register resolves every method of the class in one shot, so a
+        // missing symbol would take the whole backend down with it.
+        // -1 makes GamepadManager.checkMacDisconnect skip, i.e. "not supported".
+        return -1;
     }
     @Override
     public int showCursor(boolean hide) {

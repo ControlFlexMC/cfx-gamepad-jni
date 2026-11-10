@@ -243,6 +243,13 @@ public class GamepadManager {
      * disabled.
      */
     private void installSdlLogCapture() {
+        if (!Bindings.isJni()) {
+            // The JNA backend deliberately does not install a log callback: SDL may
+            // invoke it from its own log mutex on a non-Java thread, and the JNI side
+            // only writes a native ring buffer to avoid exactly that.
+            GamepadLog.debug("[gamepad-jni] SDL log capture is unavailable on the JNA backend");
+            return;
+        }
         boolean installed = false;
         try {
             installed = SdlLogJNI.installLogCapture();

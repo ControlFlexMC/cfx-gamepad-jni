@@ -13,8 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Loads native libraries (SDL3 and gamepad-jni JNI) from the host process, the JAR,
- * or the filesystem.
+ * Loads the SDL3 shared library and installs a backend for it.
  *
  * <p>Desktop: the caller chooses {@link Sdl3Source#HOST} (Minecraft/LWJGL SDL3
  * already in this JVM) or {@link Sdl3Source#BUNDLED} (the copy inside this JAR).
@@ -24,7 +23,10 @@ import java.util.List;
  * {@code libgamepadjni.so} from the JAR. The {@link Sdl3Source} argument is
  * ignored.</p>
  *
- * <p>The JNI library is always loaded after SDL3 is available in the process.</p>
+ * <p>SDL3 is loaded first because both backends bind to whatever is already mapped
+ * into the process. Then the JNI bridge is tried, and when it cannot load the JNA
+ * backend binds the same SDL3. {@link BindingPolicy} decides how hard to try;
+ * {@link BindingFailure} explains the outcome when neither works.</p>
  */
 final class NativeLibraryLoader {
 
@@ -45,13 +47,24 @@ final class NativeLibraryLoader {
         return hostSdl3;
     }
 
+    /** {@code "jni"}, {@code "jna"} or {@code "none"}, for diagnostics. */
+    static String binding() {
+        return Bindings.describe();
+    }
+
     /**
-     * Load both the SDL3 shared library and the JNI native library.
+     * Load SDL3, then install a backend for it: JNI first, JNA when that fails.
+     *
+     * <p>SDL3 is a precondition for both backends, so it is resolved once and the
+     * resulting {@link SdlHandle} is handed to whichever backend ends up running.
+     * The fallback lives entirely inside this method — no SDL call happens before it
+     * completes, so a half-installed backend can never be observed.</p>
      *
      * <p>This is called automatically by {@link GamepadManager#initialize}.</p>
      *
      * @param source desktop choice of host vs bundled SDL3; ignored on Android
-     * @throws UnsatisfiedLinkError if libraries cannot be loaded
+     * @throws UnsatisfiedLinkError if no backend could be installed; the message
+     *                              carries both backends' reasons
      * @throws NullPointerException if {@code source} is null
      */
     static void load(Sdl3Source source) {
@@ -60,27 +73,104 @@ final class NativeLibraryLoader {
         synchronized (NativeLibraryLoader.class) {
             if (loaded) return;
 
-            Sdl3Source.LoadKind kind = Sdl3Source.resolveLoadKind(
-                    AndroidPlatform.isAndroid(), source);
-            switch (kind) {
-                case LAUNCHER:
-                    hostSdl3 = true;
-                    GamepadLog.info("[gamepad-jni] Android: using launcher libSDL3 (Sdl3Source.{} ignored)",
-                            source);
-                    loadAndroid();
-                    break;
-                case HOST:
-                    loadDesktopHost();
-                    break;
-                case BUNDLED:
-                    loadDesktopBundled();
-                    break;
-                default:
-                    throw new IllegalStateException("unknown SDL3 load kind: " + kind);
+            BindingMode mode = BindingPolicy.mode();
+            SdlHandle sdl = loadSdl3(source);
+
+            Throwable jniFailure = null;
+            if (mode != BindingMode.JNA_ONLY) {
+                try {
+                    loadJni(sdl);
+                    Bindings.set(JniBinding.INSTANCE);
+                    loaded = true;
+                    GamepadLog.info("[gamepad-jni] binding=jni");
+                    return;
+                } catch (Throwable t) {
+                    jniFailure = t;
+                    if (mode == BindingMode.JNI_ONLY) {
+                        throw BindingFailure.of(mode, t, null, BindingPolicy.jnaPresent());
+                    }
+                    GamepadLog.warn("[gamepad-jni] JNI backend unavailable: {}", t.toString());
+                }
             }
 
-            loaded = true;
+            if (!BindingPolicy.jnaPresent()) {
+                throw BindingFailure.of(mode, jniFailure, null, false);
+            }
+
+            try {
+                JnaGamepad.install(sdl);
+                JnaUser32.install();
+                Bindings.set(JnaBinding.INSTANCE);
+                loaded = true;
+                GamepadLog.info("[gamepad-jni] binding=jna (SDL3 from {})", sdl);
+            } catch (Throwable t) {
+                throw BindingFailure.of(mode, jniFailure, t, true);
+            }
         }
+    }
+
+    /**
+     * Resolve and load SDL3 for this process.
+     *
+     * @return the handle the JNA backend binds to; the JNI backend ignores everything
+     *         but {@link SdlHandle#dir}
+     */
+    private static SdlHandle loadSdl3(Sdl3Source source) {
+        Sdl3Source.LoadKind kind = Sdl3Source.resolveLoadKind(
+                AndroidPlatform.isAndroid(), source);
+        switch (kind) {
+            case LAUNCHER: {
+                hostSdl3 = true;
+                GamepadLog.info("[gamepad-jni] Android: using launcher libSDL3 (Sdl3Source.{} ignored)",
+                        source);
+                logAndroidDiagnostics();
+                SdlHandle sdl = loadLauncherSdl3();
+                if (sdl == null) {
+                    throw new UnsatisfiedLinkError(
+                            "SDL3 unavailable on Android. Tried: "
+                                    + AndroidPlatform.launcherSdlPath(System.getenv("POJAV_NATIVEDIR"))
+                                    + " and System.loadLibrary(\"SDL3\"). "
+                                    + "See the [gamepad-jni] Android diagnostic lines above.");
+                }
+                GamepadLog.info("[gamepad-jni] Android: loaded SDL3 from {}", sdl);
+                return sdl;
+            }
+            case HOST: {
+                Path adopted = tryAdoptHostSdl3();
+                if (adopted == null) {
+                    throw new UnsatisfiedLinkError(
+                            "Sdl3Source.HOST requested but host SDL3 was not found. "
+                                    + "Looked at LWJGL SDL.getLibrary(), cfx.gamepadjni.hostSdl3Dir / "
+                                    + "CFX_HOST_SDL3_DIR, org.lwjgl.librarypath, and java.library.path. "
+                                    + "Pass Sdl3Source.BUNDLED to use the copy inside the gamepad-jni JAR.");
+                }
+                hostSdl3 = true;
+                GamepadLog.info("[gamepad-jni] using host SDL3 (Minecraft/LWJGL); bundled SDL3 not loaded");
+                return SdlHandle.ofFile(null, adopted);
+            }
+            case BUNDLED: {
+                hostSdl3 = false;
+                Path nativeDir = findNativeDir(false);
+                return loadSDL3(nativeDir);
+            }
+            default:
+                throw new IllegalStateException("unknown SDL3 load kind: " + kind);
+        }
+    }
+
+    /**
+     * Load our own JNI bridge and leave it mapped, ready for {@link JniBinding}.
+     *
+     * @param sdl when it carries an extraction directory, the bridge is taken from
+     *            there so the bundled case does not unpack the natives twice
+     */
+    private static void loadJni(SdlHandle sdl) {
+        if (AndroidPlatform.isAndroid()) {
+            loadAndroidJni();
+            return;
+        }
+        Path dir = sdl != null ? sdl.dir : null;
+        loadJNILibrary(dir != null ? dir : findNativeDir(true));
     }
 
     /**
@@ -91,14 +181,14 @@ final class NativeLibraryLoader {
      * per-version/arch sub-directories) and in whether they pre-extract them or
      * let LWJGL extract lazily, so discovery must not depend on one layout.</p>
      */
-    private static boolean tryAdoptHostSdl3() {
+    private static Path tryAdoptHostSdl3() {
         // 1) Ask LWJGL which SDL3 it uses. Authoritative, layout independent, and
         //    it makes LWJGL load Minecraft's own SDL3 if MC has not touched SDL yet.
         Path loaded = findLoadedLwjglSdl3();
         if (loaded != null) {
             System.load(loaded.toString());
             GamepadLog.info("[gamepad-jni] loaded host SDL3 from {}", loaded);
-            return true;
+            return loaded;
         }
 
         // 2) Explicit override directory.
@@ -110,7 +200,7 @@ final class NativeLibraryLoader {
             if (sdl != null) {
                 System.load(sdl.toString());
                 GamepadLog.info("[gamepad-jni] loaded host SDL3 from {}", sdl);
-                return true;
+                return sdl;
             }
         }
 
@@ -126,7 +216,7 @@ final class NativeLibraryLoader {
             if (sdl != null) {
                 System.load(sdl.toString());
                 GamepadLog.info("[gamepad-jni] loaded host SDL3 from {}", sdl);
-                return true;
+                return sdl;
             }
         }
         for (String entry : splitPathList(System.getProperty("java.library.path"))) {
@@ -134,14 +224,14 @@ final class NativeLibraryLoader {
             if (sdl != null) {
                 System.load(sdl.toString());
                 GamepadLog.info("[gamepad-jni] loaded host SDL3 from {}", sdl);
-                return true;
+                return sdl;
             }
         }
 
         if (isLwjglSdlClassPresent()) {
             GamepadLog.info("[gamepad-jni] LWJGL SDL class present but host native not found on library path");
         }
-        return false;
+        return null;
     }
 
     /**
@@ -299,63 +389,18 @@ final class NativeLibraryLoader {
     }
 
     /**
-     * Desktop HOST: share Minecraft/LWJGL SDL3. Fail if it is not in this process.
-     */
-    private static void loadDesktopHost() {
-        if (!tryAdoptHostSdl3()) {
-            throw new UnsatisfiedLinkError(
-                    "Sdl3Source.HOST requested but host SDL3 was not found. "
-                            + "Looked at LWJGL SDL.getLibrary(), cfx.gamepadjni.hostSdl3Dir / "
-                            + "CFX_HOST_SDL3_DIR, org.lwjgl.librarypath, and java.library.path. "
-                            + "Pass Sdl3Source.BUNDLED to use the copy inside the gamepad-jni JAR.");
-        }
-        hostSdl3 = true;
-        GamepadLog.info("[gamepad-jni] using host SDL3 (Minecraft/LWJGL); bundled SDL3 not loaded");
-        loadJNILibrary(findNativeDir(true));
-    }
-
-    /**
-     * Desktop BUNDLED: extract SDL3 and the JNI library from the JAR.
-     * Host / LWJGL SDL3 is never opened.
-     */
-    private static void loadDesktopBundled() {
-        hostSdl3 = false;
-        Path nativeDir = findNativeDir(false);
-        loadSDL3(nativeDir);
-        loadJNILibrary(nativeDir);
-    }
-
-    /**
-     * Android chain: SDL3 comes from the launcher APK (whose ART side has already
-     * installed the {@code org.libsdl.app.*} glue), and we only supply our own
-     * {@code libgamepadjni.so}.
+     * Android: load only {@code libgamepadjni.so}. SDL3 already came from the
+     * launcher APK in {@link #loadSdl3}, and the dynamic linker bound the JNI
+     * library's {@code DT_NEEDED} to that very instance.
      *
-     * <p>The order is a hard constraint: SDL3 must be loaded first, because the
-     * JNI library's {@code DT_NEEDED} is {@code libSDL3.so} and the dynamic linker
-     * binds it by SONAME to that very instance.</p>
+     * <p>{@code CFX_LIB_PATH} only takes effect at this step:</p>
      */
-    private static void loadAndroid() {
-        logAndroidDiagnostics();
-
-        // (1) SDL3: the launcher's copy only. CFX_LIB_PATH deliberately does NOT
-        //     apply here - loading SDL3 from another path creates a second instance
-        //     which has no launcher glue and can never see a gamepad.
-        Path sdl = loadLauncherSdl3();
-        if (sdl == null) {
-            throw new UnsatisfiedLinkError(
-                    "SDL3 unavailable on Android. Tried: "
-                            + AndroidPlatform.launcherSdlPath(System.getenv("POJAV_NATIVEDIR"))
-                            + " and System.loadLibrary(\"SDL3\"). "
-                            + "See the [gamepad-jni] Android diagnostic lines above.");
-        }
-        GamepadLog.info("[gamepad-jni] Android: loaded SDL3 from {}", sdl);
-
-        // (2) libgamepadjni.so: CFX_LIB_PATH only takes effect at this step.
+    private static void loadAndroidJni() {
         Path override = libPathOverride();
         if (override != null) {
             Path jni = override.resolve(getJNIFileName());
             if (Files.exists(jni)) {
-                loadJniBridge(jni);
+                loadJniFile(jni);
                 GamepadLog.info("[gamepad-jni] Android: loaded JNI bridge from CFX_LIB_PATH {}", jni);
                 return;
             }
@@ -373,12 +418,12 @@ final class NativeLibraryLoader {
                             + " found in the classpath. Is the mod jar built with Android natives?");
         }
         Path jni = dir.resolve(getJNIFileName());
-        loadJniBridge(jni);
+        loadJniFile(jni);
         GamepadLog.info("[gamepad-jni] Android: loaded JNI bridge from {}", jni);
     }
 
     /**
-     * Load our own JNI bridge, converting every failure into an
+     * Load our own JNI bridge, converting every failure into a
      * {@link UnsatisfiedLinkError} so callers keep a single failure mode.
      *
      * <p>{@code Throwable} rather than {@code UnsatisfiedLinkError}: a native load
@@ -387,7 +432,7 @@ final class NativeLibraryLoader {
      * 5.3 any such failure must degrade to "no controller", never reach the game
      * entrypoint.</p>
      */
-    private static void loadJniBridge(Path jni) {
+    private static void loadJniFile(Path jni) {
         try {
             System.load(jni.toString());
         } catch (Throwable t) {
@@ -400,14 +445,14 @@ final class NativeLibraryLoader {
     /**
      * Load the launcher-provided SDL3 on Android.
      *
-     * @return the path actually used, or {@code null} if both strategies failed
+     * @return how SDL3 was resolved, or {@code null} if both strategies failed
      */
-    private static Path loadLauncherSdl3() {
+    private static SdlHandle loadLauncherSdl3() {
         String path = AndroidPlatform.launcherSdlPath(System.getenv("POJAV_NATIVEDIR"));
         if (path != null) {
             try {
                 System.load(path);
-                return Paths.get(path);
+                return SdlHandle.ofFile(null, Paths.get(path));
             } catch (Throwable t) {
                 // Throwable, not just UnsatisfiedLinkError: the JVM resolves JNI_OnLoad on
                 // this handle and can end up running SDL's (see gamepad_jni.c), which leaves
@@ -418,7 +463,8 @@ final class NativeLibraryLoader {
         }
         try {
             System.loadLibrary("SDL3");
-            return Paths.get("libSDL3.so (resolved via java.library.path)");
+            // Resolved through java.library.path, so there is no path to hand to JNA.
+            return SdlHandle.ofName(SDL_LIB_NAME);
         } catch (Throwable t) {
             GamepadLog.warn("[gamepad-jni] Android: System.loadLibrary(\"SDL3\") failed: {}: {}",
                     t.getClass().getName(), t.getMessage());
@@ -484,18 +530,22 @@ final class NativeLibraryLoader {
 
     /**
      * Load the SDL3 shared library.
+     *
+     * @return where it came from: the extracted file, or the bare library name when
+     *         the platform resolved it through {@code java.library.path}
      */
-    private static void loadSDL3(Path nativeDir) {
+    private static SdlHandle loadSDL3(Path nativeDir) {
         if (nativeDir != null) {
             Path sdlPath = findSdl3File(nativeDir);
             if (sdlPath != null) {
                 System.load(sdlPath.toString());
-                return;
+                return SdlHandle.ofFile(nativeDir, sdlPath);
             }
         }
 
         try {
             System.loadLibrary(SDL_LIB_NAME);
+            return SdlHandle.ofName(SDL_LIB_NAME);
         } catch (UnsatisfiedLinkError e) {
             throw new UnsatisfiedLinkError(
                     "Failed to load SDL3 library. " +
