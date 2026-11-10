@@ -49,6 +49,69 @@ whichever copy is already mapped into the process:
 | Windows  | `gamepadjni.dll`       | `SDL3.dll`           |
 | Linux    | `libgamepadjni.so`     | `libSDL3.so`       |
 
+## Binding: JNI first, JNA fallback
+
+The JAR carries two independent backends for the same SDL3 gamepad API. At
+`GamepadManager.initialize(...)` the JNI bridge is loaded first; if that fails and
+the host classpath has JNA, the same SDL3 is bound through JNA direct mapping
+instead. **Nothing above this layer changes** — `GamepadJNI`, `Gamepad`,
+`GamepadManager`, `SystemCursor` and `Sdl3Source` keep their signatures, and a
+process that loads the JNI bridge never touches the JNA code.
+
+Why: Windows 11 Smart App Control blocks unsigned binaries with no cloud
+reputation, which is exactly what our own `gamepadjni.dll` is. On such a machine
+the JNI load fails and the JNA backend takes over — JNA's `jnidispatch` comes from
+the game's own classpath, so nothing of ours is blocked. Everywhere else the JNI
+path runs exactly as before.
+
+### Forcing a backend
+
+```bash
+-Dcfx.gamepadjni.binding=jni    # JNI only, no fallback (reproduce a JNI failure)
+-Dcfx.gamepadjni.binding=jna    # JNA only, JNI never attempted
+-Dcfx.gamepadjni.binding=auto   # default: JNI, then JNA
+```
+
+`CFX_GAMEPADJNI_BINDING` is read when the system property is absent. Values are
+case-insensitive; anything unrecognised behaves like `auto` and is logged once.
+
+### JNA is never packaged
+
+JNA is a `compileOnly` dependency of this library. At runtime the backend uses
+whatever `net.java.dev.jna:jna` the host already has: JNA has been on Minecraft's
+own classpath since 1.8.9, so no mod needs to ship it. The library is compiled
+against **3.4.0**, the oldest of those, and only calls
+`NativeLibrary.getInstance`, `Native.register`, `Pointer`, `Memory` and the
+`*ByReference` types — all of which have kept their binary signatures since then.
+
+| Minecraft | JNA on the Windows classpath |
+| --- | --- |
+| 1.7.10 | **none** — JNI only, the JNA fallback cannot engage |
+| 1.8.9 – 1.11.2 | 3.4.0 |
+| 1.12.2 – 1.16.5 | 4.4.0 |
+| 1.17.1 | 5.8.0 |
+| 1.18.2 – 1.19.2 | 5.10.0 |
+| 1.20.1 | 5.12.1 |
+| 1.21.1 | 5.14.0 |
+| 1.21.11 / 26.x | 5.17.0 |
+
+### What a failure looks like
+
+When neither backend loads, the error names both, so a locked-down Windows install
+is distinguishable from a version that simply ships no JNA:
+
+```
+[gamepad-jni] no usable gamepad backend (binding=auto)
+  JNI: java.lang.UnsatisfiedLinkError: ...gamepadjni.dll: An Application Control policy has blocked this file
+  JNA: unavailable - com.sun.jna.Native not on the classpath (this Minecraft version ships no JNA)
+  hint: this Minecraft version has no JNA, so only the JNI backend is possible; Smart App Control on Windows 11 is blocking the unsigned gamepadjni.dll
+```
+
+Two things are deliberately absent from the JNA backend: SDL's own log capture
+(it would require a JNA callback invoked from SDL's log mutex) and, on macOS, the
+`GCController` disconnect probe. Both are diagnostics-grade; the gamepad API
+itself is identical.
+
 ## Adding Platform Support for Control Flex
 
 Control Flex loads native libraries from the JAR at runtime. To add or update a platform's native libraries, place the compiled `.so`/`.dylib`/`.dll` files into the corresponding `prebuilt/` directories, then rebuild the JAR.
@@ -210,6 +273,15 @@ libraries live only on your disk.
 Releases are built by the `build natives` workflow on GitHub-hosted runners, which
 compiles every platform, packages the JAR and attaches it (with `checksums.txt`) to
 the GitHub release for the tag.
+
+Windows DLLs get their PE timestamp from `prebuilt/patch-pe-timestamp.py`, which
+writes one fixed value — `SOURCE_DATE_EPOCH`, or the HEAD commit time when that is
+unset — into the COFF header and the export directory after the link. Both
+toolchains bake in their own value (ld writes zero, lld writes a hash) and neither
+can be told which to use, so the final bytes come from the patch step. A stable
+value keeps the JAR reproducible **and** keeps the file hash identical for every
+user of a release, which is what Smart App Control and Defender key their
+reputation on.
 
 JitPack does not build natives: its install hook downloads that released JAR,
 verifies the SHA-256 against the published checksums and installs it into the local
@@ -395,8 +467,13 @@ cfx-gamepad-jni/
 │       ├── GamepadManager.java     # Entry point: initialize, poll events, open/close gamepads
 │       ├── HostPlatform.java       # DESKTOP / ANDROID / IOS (cached host)
 │       ├── Gamepad.java            # Per-gamepad state: axes, buttons, rumble, LED, sensors
-│       ├── GamepadJNI.java         # Native method declarations
-│       ├── NativeLibraryLoader.java # Extracts and loads natives from JAR
+│       ├── GamepadJNI.java         # Public facade: 75 SDL calls, delegates to the binding
+│       ├── GamepadBinding.java     # Internal interface both backends implement
+│       ├── JniGamepad.java         # JNI declarations (target of the native symbols)
+│       ├── JnaGamepad.java         # JNA direct mapping onto the same SDL3
+│       ├── Bindings.java           # Holds the installed binding; throws ULE before init
+│       ├── BindingPolicy.java      # jni / jna / auto switch + JNA presence check
+│       ├── NativeLibraryLoader.java # Loads SDL3, then JNI, falling back to JNA
 │       ├── Sdl3Source.java         # HOST vs BUNDLED (desktop); ignored on Android
 │       ├── GamepadAxis.java        # Axis enum (LEFTX, LEFTY, TRIGGERS, etc.)
 │       ├── GamepadButton.java      # Button enum (SOUTH, EAST, DPAD, etc.)
