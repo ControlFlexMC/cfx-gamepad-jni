@@ -80,6 +80,7 @@ final class NativeLibraryLoader {
             if (mode != BindingMode.JNA_ONLY) {
                 try {
                     loadJni(sdl);
+                    probeJni();
                     Bindings.set(JniBinding.INSTANCE);
                     loaded = true;
                     GamepadLog.info("[gamepad-jni] binding=jni");
@@ -171,6 +172,23 @@ final class NativeLibraryLoader {
         }
         Path dir = sdl != null ? sdl.dir : null;
         loadJNILibrary(dir != null ? dir : findNativeDir(true));
+    }
+
+    /**
+     * Call one cheap entry point so a binary built from older sources fails here
+     * instead of at the first gamepad call.
+     *
+     * <p>{@code System.load} only reads {@code JNI_OnLoad}; a library whose exported
+     * names predate the current Java API loads happily and then throws on every
+     * call. That is the 0.10.2 stale-native incident, and the JNA fallback is a
+     * better answer than a silent "no gamepad" — so the probe throws, the caller
+     * treats it as a JNI failure, and SDL3 is re-bound through JNA.</p>
+     *
+     * <p>{@code SDL_GetVersion} returns compile-time constants, so it is safe
+     * before {@code SDL_InitSubSystem}.</p>
+     */
+    private static void probeJni() {
+        JniGamepad.SDL_GetVersion();
     }
 
     /**

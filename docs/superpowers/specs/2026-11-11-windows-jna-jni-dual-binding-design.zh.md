@@ -170,6 +170,7 @@ NativeLibraryLoader.load(source):
 2. **回退只发生在 `load()` 内部**，且必须在任何 SDL 调用之前完成。`JnaGamepad` 是独立类，注册到一半失败也不会污染 JNI 路径。
 3. **`loadSdl3` 返回 `SdlHandle{Path dir, Path file, String name}`**。`dir` 是解压目录（HOST 模式下为 null）；`file` 是 SDL3 的实际路径；走 `System.loadLibrary("SDL3")` 时 `file == null, name == "SDL3"`，JNA 用名字绑定。`loadJniBridge(sdl)` 把 `sdl.dir` 当提示：目录里已有 `gamepadjni.dll` 就直接用（BUNDLED 已把两个文件解压到同一目录），否则回退到今天的 `findNativeDir(true)`。这样 BUNDLED 不会解压两次，HOST 也不需要 `dir`。
 4. **回退时复用同一个 `SdlHandle`**，不重新解压、不重新搜索。`Sdl3Source.BUNDLED` 下临时目录里的 SDL3 已经加载，JNA 直接绑它。
+5. **JNI 加载成功后要探一次**：`loadJni` 之后调用 `JniGamepad.SDL_GetVersion()`。`System.load` 只执行 `JNI_OnLoad`，符号名比 Java 侧旧的二进制照样能加载，然后每个调用都抛 `UnsatisfiedLinkError`——0.10.2 就是这么发出去的。探针让这种二进制走回退，而不是静默降级成「没有手柄」。`SDL_GetVersion` 返回编译期常量，`SDL_InitSubSystem` 之前调用是安全的。
 
 `loaded` 标志仍然只在整段成功后才置位，失败可重试；`Bindings` 保持未安装状态。
 
