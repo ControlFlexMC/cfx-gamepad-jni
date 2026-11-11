@@ -126,6 +126,44 @@ Three things to keep in mind:
 - If JNA cannot extract `jnidispatch` from its own jar, point it at the unpacked
   copy with `-Djna.boot.library.path=<dir containing jnidispatch.dll>`.
 
+The less invasive route is the launcher's own class path, because it leaves the
+boot class path alone. Launchers build `-cp` from the `libraries` array of the
+version JSON, so "adding to the class path" means adding one entry there and
+putting the jar where that entry resolves to.
+
+For Prism (MultiMC family), a per-instance library is a JSON patch entry plus the
+file inside the instance:
+
+```json
+// <instance>/patches/net.java.dev.jna.local.json
+{
+  "formatVersion": 1,
+  "name": "JNA (local)",
+  "uid": "net.java.dev.jna.local",
+  "version": "5.12.1",
+  "+libraries": [
+    { "name": "net.java.dev.jna:jna:5.12.1", "MMC-hint": "local" }
+  ]
+}
+```
+
+```
+<instance>/libraries/net/java/dev/jna/jna/5.12.1/jna-5.12.1.jar
+```
+
+`MMC-hint: local` is what makes the launcher take the file from the instance
+instead of downloading the coordinate. The component also needs an entry in
+`<instance>/mmc-pack.json` (`{"uid": "net.java.dev.jna.local", "version": "5.12.1"}`);
+Prism's Version page does that for you if you add the patch from the UI.
+
+For the vanilla launcher and anything else that reads the version JSON directly,
+the same thing without the hint: add `{ "name": "net.java.dev.jna:jna:5.12.1" }` to
+`libraries` and place the jar at `.minecraft/libraries/net/java/dev/jna/jna/5.12.1/jna-5.12.1.jar`.
+
+Either way the library needs no configuration: `jnaPresent()` sees JNA through the
+game class loader, and for 1.7.10 Forge that loader is LaunchClassLoader, which
+delegates to the parent for `com.sun.jna`.
+
 ### What a failure looks like
 
 When neither backend loads, the error names both, so a locked-down Windows install
