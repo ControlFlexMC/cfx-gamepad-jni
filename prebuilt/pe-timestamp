@@ -1,0 +1,13 @@
+# PE TimeDateStamp for the Windows native libraries, in Unix seconds.
+#
+# One value for both architectures, written into the COFF header and the export
+# directory by patch-pe-timestamp.py after the link. It lives in the repository
+# on purpose: a value derived from the build (HEAD commit time, environment) would
+# change whenever any file changes, including Java-only commits that leave the
+# DLL bytes identical — and Smart App Control / Defender key their reputation on
+# the file hash, so a moving timestamp restarts it on every release.
+#
+# Bump it only when the native sources change:
+#   prebuilt/bump-pe-timestamp.sh
+# and commit the result together with the native change.
+1794355675

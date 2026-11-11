@@ -547,9 +547,10 @@ organize_output_windows() {
 
     # Stamp the PE timestamp. ld writes zero and lld writes a hash, and neither
     # can be told "use this exact value", so the shipped bytes are fixed up here
-    # instead - one value for both architectures, derived from SOURCE_DATE_EPOCH.
-    # A stable value per release is also what lets SAC/Defender reputation
-    # accumulate against a single file hash; see patch-pe-timestamp.py.
+    # instead - one value for both architectures, read from the committed
+    # prebuilt/pe-timestamp. A value that only moves when the native sources move
+    # is also what lets SAC/Defender reputation accumulate against one file hash;
+    # see patch-pe-timestamp.py.
     local patcher="${GAMEPAD_JNI_ROOT}/prebuilt/patch-pe-timestamp.py"
     local -a patch_py=()
     local candidate

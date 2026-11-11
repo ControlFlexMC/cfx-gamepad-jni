@@ -403,10 +403,18 @@ Java_com_ifels_gamepadjni_GamepadJNI_*   →   Java_com_ifels_gamepadjni_JniGame
 
 `prebuilt/patch-pe-timestamp.py <dll>...`
 
-1. 取时间戳：`SOURCE_DATE_EPOCH` → `git log -1 --format=%ct` → **报错退出**。最后一条是刻意的：静默退回当前时间会让可复现性悄悄失效。
+1. 取时间戳：读仓库里的 `prebuilt/pe-timestamp`（纯文本，`#` 开头为注释，第一个有效行是 Unix 秒）。文件不存在或解析失败 → **报错退出**。
 2. 解析 PE，把两处 `TimeDateStamp` 写成同一个值：COFF 文件头，以及导出目录（按 `IMAGE_DIRECTORY_ENTRY_EXPORT` 的 RVA 定位，不硬编码 `0x4004`）。
 3. 若原 PE 校验和非 0，按标准算法重算；原值为 0（lld 的产物）就保持 0。
 4. 幂等：已经是目标值时不做任何写入，便于重复执行。
+
+时间戳**不从环境变量、也不从 `git log` 推导**。放在仓库里是有意的：从构建推导意味着任何一次提交（包括只改 Java、DLL 字节根本不变的提交）都会换一个值，而 SAC / Defender 的信誉是按文件哈希累积的，换一次就归零一次。所以只在原生源码变化时手动更新：
+
+```bash
+prebuilt/bump-pe-timestamp.sh   # git log -1 --format=%ct → prebuilt/pe-timestamp
+```
+
+脚本只替换数值行、保留注释头，值没变时输出 `unchanged` 并退出。
 
 调用方按 `python3` → `python` → `py -3` 顺序探测；仓库的 `build-jni-android.sh` 本来就依赖 `python3`，不引入新前置条件。
 

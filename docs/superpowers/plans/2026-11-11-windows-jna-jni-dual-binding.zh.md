@@ -20,7 +20,7 @@
 - 不做 GLFW 兜底；不改 `Sdl3Source` 语义；不给 `SdlLogJNI` 做 JNA 回调。
 - `bool` 返回值在 JNA 绑定里一律 `byte` + `!= 0`，**不得写成 `boolean`**。
 - 未安装绑定时 `Bindings.b()` 必须抛 `UnsatisfiedLinkError`，不得抛 `NullPointerException`。
-- 构建产物时间戳取 `SOURCE_DATE_EPOCH` → `git log -1 --format=%ct` → 失败退出，不得回退到当前时间。
+- 构建产物时间戳取仓库里的 `prebuilt/pe-timestamp`，缺失或解析失败即退出；不从环境变量、也不从 `git log` 推导。
 
 ## Review Focus
 
@@ -801,7 +801,8 @@ Expected: **任务失败**（其余 8 个平台还是旧符号），但日志里
 
 要求（纯 Python 3 标准库，不引第三方）：
 
-1. 时间戳来源：`os.environ["SOURCE_DATE_EPOCH"]` → `git log -1 --format=%ct` → `sys.exit("...")` 并打印两条来源都说明。
+1. 时间戳来源：读脚本同目录的 `pe-timestamp`（`#` 为注释，取第一个有效行）；文件缺失或值非法 → `sys.exit("...")`。
+   另建 `prebuilt/bump-pe-timestamp.sh` 用 `git log -1 --format=%ct` 更新该文件。
 2. 只用标准库解析 PE：`MZ` → `e_lfanew` → `PE\0\0` → COFF 头（`TimeDateStamp` 在 `e_lfanew + 8`）。
 3. 导出目录时间戳：读可选头 `NumberOfRvaAndSizes` / `DataDirectory[0]`（`IMAGE_DIRECTORY_ENTRY_EXPORT`）拿 RVA，再按节表把 RVA 转文件偏移，写该结构偏移 +4 的 32 位字段。RVA 为 0 时跳过。
 4. 校验和：读可选头 `CheckSum` 字段；非 0 时按 PE 算法重算（16 位累加，折叠进位，加上文件长度）。为 0 时保持 0。
@@ -812,16 +813,19 @@ Expected: **任务失败**（其余 8 个平台还是旧符号），但日志里
 
 ```bash
 cp prebuilt/jni/windows-x86_64/gamepadjni.dll /tmp/t.dll
-SOURCE_DATE_EPOCH=1700000000 python3 prebuilt/patch-pe-timestamp.py /tmp/t.dll
+python3 prebuilt/patch-pe-timestamp.py /tmp/t.dll
 python3 - <<'EOF'
 import struct
+expected = int([l for l in open('prebuilt/pe-timestamp') if l.strip() and not l.startswith('#')][0])
 d = open('/tmp/t.dll','rb').read()
 e = struct.unpack_from('<I', d, 0x3c)[0]
-print(struct.unpack_from('<I', d, e+8)[0])
+actual = struct.unpack_from('<I', d, e+8)[0]
+print(actual, 'expected', expected)
+assert actual == expected
 EOF
 ```
 
-Expected: 打印 `1700000000`。
+Expected: 打印 `patched /tmp/t.dll: 0x00000000 -> 0x…`，随后 `… expected …` 且断言通过。
 
 - [ ] **Step 3: 幂等性验证**
 
@@ -857,7 +861,7 @@ Windows 分支里（现在打印 DLL 依赖的那段之后）加：用 `python3`
 
 ```bash
 git add prebuilt/patch-pe-timestamp.py prebuilt/build-jni.sh CMakeLists.txt
-git commit -m "build(win): stamp a fixed PE timestamp derived from SOURCE_DATE_EPOCH"
+git commit -m "build(win): stamp a committed PE timestamp"
 ```
 
 ---
@@ -877,7 +881,7 @@ git commit -m "build(win): stamp a fixed PE timestamp derived from SOURCE_DATE_E
 
 - [ ] **Step 2: 更新「Who owns prebuilt/」**
 
-补一句：Windows DLL 的 PE 时间戳由 `prebuilt/patch-pe-timestamp.py` 写成 `SOURCE_DATE_EPOCH`（缺省取 HEAD 提交时间），因此同一 tag 重编仍得到同一 hash。
+补一句：Windows DLL 的 PE 时间戳由 `prebuilt/patch-pe-timestamp.py` 写成仓库里的 `prebuilt/pe-timestamp`，只在原生源码变化时用 `prebuilt/bump-pe-timestamp.sh` 更新，因此同一 tag 重编、以及只改 Java 的重新发布都得到同一 hash。
 
 - [ ] **Step 3: 提交**
 

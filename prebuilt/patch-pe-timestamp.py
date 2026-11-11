@@ -1,32 +1,35 @@
 #!/usr/bin/env python3
-"""Stamp a fixed PE timestamp into a Windows DLL.
+"""Stamp the committed PE timestamp into a Windows DLL.
 
 GNU ld zeroes the timestamp (``--no-insert-timestamp``) and lld writes a value
 derived from the output hash, so neither toolchain can be told "use this one
 value". Both are fixed up here after the link instead, which also keeps the two
 Windows architectures consistent with each other.
 
-The value comes from ``SOURCE_DATE_EPOCH`` (the reproducible-builds convention)
-and falls back to the timestamp of the HEAD commit. There is deliberately no
-"use the current time" fallback: that would silently make the artifact
-non-reproducible and, because SAC/Defender reputation is keyed on the file hash,
-start every build's reputation from zero.
+The value comes from ``prebuilt/pe-timestamp``, which is committed. It is
+deliberately not derived from the build: a timestamp taken from the environment
+or from ``git log HEAD`` changes on every commit, including Java-only commits
+that leave the DLL bytes identical, and Smart App Control / Defender key a
+file's reputation on its hash. Bump the file with
+``prebuilt/bump-pe-timestamp.sh`` when the native sources change.
 
 Usage:
     patch-pe-timestamp.py <dll> [<dll> ...]
 
-Exit status is non-zero when a file cannot be parsed or no timestamp is available.
+Exit status is non-zero when a file cannot be parsed or the timestamp file is
+missing or malformed.
 """
 
 import os
 import struct
-import subprocess
 import sys
 
 IMAGE_DIRECTORY_ENTRY_EXPORT = 0
 
 PE32_MAGIC = 0x10B
 PE32_PLUS_MAGIC = 0x20B
+
+TIMESTAMP_FILE = "pe-timestamp"
 
 
 def fail(message):
@@ -46,25 +49,23 @@ def write_u32(data, offset, value):
 
 
 def resolve_timestamp():
-    raw = os.environ.get("SOURCE_DATE_EPOCH", "").strip()
-    if raw:
-        try:
-            return int(raw, 10)
-        except ValueError:
-            fail("SOURCE_DATE_EPOCH is not an integer: " + repr(raw))
-
-    here = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), TIMESTAMP_FILE)
     try:
-        out = subprocess.check_output(
-            ["git", "-C", here, "log", "-1", "--format=%ct"],
-            stderr=subprocess.DEVNULL,
-        ).decode().strip()
-    except Exception:
-        out = ""
-    if out.isdigit():
-        return int(out)
+        with open(path, "r") as handle:
+            lines = handle.readlines()
+    except OSError as error:
+        fail("cannot read " + path + ": " + str(error))
 
-    fail("no timestamp available: set SOURCE_DATE_EPOCH, or run inside a git checkout")
+    for line in lines:
+        text = line.strip()
+        if not text or text.startswith("#"):
+            continue
+        try:
+            return int(text, 10)
+        except ValueError:
+            fail(path + ": not a Unix timestamp: " + repr(text))
+
+    fail(path + " holds no timestamp")
 
 
 def rva_to_offset(data, pe_offset, size_of_optional_header, rva):

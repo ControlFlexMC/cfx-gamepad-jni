@@ -275,13 +275,17 @@ compiles every platform, packages the JAR and attaches it (with `checksums.txt`)
 the GitHub release for the tag.
 
 Windows DLLs get their PE timestamp from `prebuilt/patch-pe-timestamp.py`, which
-writes one fixed value — `SOURCE_DATE_EPOCH`, or the HEAD commit time when that is
-unset — into the COFF header and the export directory after the link. Both
-toolchains bake in their own value (ld writes zero, lld writes a hash) and neither
-can be told which to use, so the final bytes come from the patch step. A stable
-value keeps the JAR reproducible **and** keeps the file hash identical for every
-user of a release, which is what Smart App Control and Defender key their
-reputation on.
+writes the value committed in [`prebuilt/pe-timestamp`](prebuilt/pe-timestamp) into
+the COFF header and the export directory after the link. Both toolchains bake in
+their own value (ld writes zero, lld writes a hash) and neither can be told which
+to use, so the final bytes come from the patch step.
+
+That value lives in the repository rather than being derived from the build on
+purpose. A timestamp taken from the environment or from `git log HEAD` would move
+on every commit — including Java-only commits that leave the DLL bytes identical —
+and Smart App Control and Defender key their file reputation on the hash, so each
+move would start it over. Bump it with `prebuilt/bump-pe-timestamp.sh` when the
+native sources change, and commit the result with that change.
 
 JitPack does not build natives: its install hook downloads that released JAR,
 verifies the SHA-256 against the published checksums and installs it into the local
