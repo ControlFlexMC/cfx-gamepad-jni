@@ -8,6 +8,7 @@
 #
 # Usage:
 #   ./tools/publish_maven_local.sh
+#   ./tools/publish_maven_local.sh -x verifyNativeSymbols   # see the failure note below
 #
 set -euo pipefail
 
@@ -18,10 +19,17 @@ PROPS_FILE="${PROJECT_DIR}/gradle.properties"
 GROUP_ID="com.github.ControlFlexMC"
 ARTIFACT_ID="cfx-gamepad-jni"
 
-# The Gradle wrapper is not usable in this repo (gradle/wrapper/gradle-wrapper.jar
-# was never committed), so invoke the system Gradle the same way the other
-# top-level scripts (publish-release.sh, build-snapshot.sh) do.
-GRADLE_BIN="${GRADLE_BIN:-gradle}"
+# Prefer the wrapper: it pins the Gradle version this project is built with, which
+# is what CI and publish-release.sh use. GRADLE_BIN overrides it for the odd host
+# where the wrapper cannot run; a bare `gradle` is the last resort.
+GRADLE_CMD=()
+if [[ -x "${PROJECT_DIR}/gradlew" ]]; then
+    GRADLE_CMD=("${PROJECT_DIR}/gradlew")
+elif [[ -n "${GRADLE_BIN:-}" ]] && command -v "${GRADLE_BIN}" >/dev/null 2>&1; then
+    GRADLE_CMD=("${GRADLE_BIN}")
+elif command -v gradle >/dev/null 2>&1; then
+    GRADLE_CMD=(gradle)
+fi
 
 log_step() {
     echo ""
@@ -64,7 +72,7 @@ detect_java_home() {
 }
 
 [[ -f "${PROPS_FILE}" ]] || fail "gradle.properties not found: ${PROPS_FILE}"
-command -v "${GRADLE_BIN}" >/dev/null 2>&1 || fail "${GRADLE_BIN} not found in PATH"
+[[ ${#GRADLE_CMD[@]} -gt 0 ]] || fail "no Gradle available: no ./gradlew, no GRADLE_BIN, no gradle in PATH"
 
 VERSION="$(read_prop version)"
 [[ -n "${VERSION}" ]] || fail "version is empty in gradle.properties"
@@ -83,11 +91,21 @@ if [[ -n "${JAVA_HOME:-}" ]]; then
 fi
 
 # publishToMavenLocal depends on jar, and jar depends on verifyNativeSymbols —
-# so a native library that drifted from GamepadJNI.java fails the publish here
+# so a native library that drifted from JniGamepad.java fails the publish here
 # rather than at runtime in a consumer.
 log_step "2/3" "publishToMavenLocal"
 cd "${PROJECT_DIR}"
-"${GRADLE_BIN}" publishToMavenLocal
+if ! "${GRADLE_CMD[@]}" publishToMavenLocal "$@"; then
+    echo ""
+    echo "❌ publishToMavenLocal failed." >&2
+    echo "   If it stopped at verifyNativeSymbols, the packaged natives still export an" >&2
+    echo "   older Java API than JniGamepad.java declares. Rebuild them first:" >&2
+    echo "     cd prebuilt && ./build-jni.sh --all     # this host's platforms only" >&2
+    echo "     build natives workflow                  # the full 9-platform matrix" >&2
+    echo "   A jar built with stale natives is not shippable. For a local-only build:" >&2
+    echo "     ./tools/publish_maven_local.sh -x verifyNativeSymbols" >&2
+    exit 1
+fi
 
 log_step "3/3" "Verify local artifact"
 [[ -f "${JAR}" ]] || fail "JAR not found: ${JAR}"
