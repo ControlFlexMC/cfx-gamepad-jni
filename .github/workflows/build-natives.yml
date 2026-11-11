@@ -41,6 +41,12 @@ jobs:
     runs-on: ${{ matrix.runner }}
     container:
       image: ${{ matrix.image }}
+      # Dockerd's embedded DNS is unreachable from inside the job container on
+      # the current Ubuntu 24.04 fleet: every lookup fails with "Could not
+      # resolve 'archive.ubuntu.com'" and apt-get then finds no packages, even
+      # across retries. Pin public resolvers so apt does not depend on the
+      # runner's /etc/resolv.conf being forwarded correctly.
+      options: --dns 1.1.1.1 --dns 8.8.8.8
     # Container jobs do not inherit the runner's toolcache JDK, and the JNI build
     # needs jni.h from one. The package name differs per architecture.
     env:
