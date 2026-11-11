@@ -418,7 +418,7 @@ grep -c "GamepadJNI_" gamepad_jni.c gamepad_jni_macos.m     # 期望 0 / 0
 
 - [ ] **Step 10: 更新 `verifyNativeSymbols`**
 
-`build.gradle` 140-241 行：`jniSymbolFor` 前缀改 `Java_com_ifels_gamepadjni_JniGamepad_`；`declaredNativeMethods` 读 `JniGamepad.java`；删掉 `getVersionPendingPlatforms` 与引用它的过滤条件；在 `doLast` 开头加：
+`build.gradle` 140-241 行：`jniSymbolFor` 前缀改 `Java_com_ifels_gamepadjni_JniGamepad_`；`declaredNativeMethods` 读 `JniGamepad.java`；`darwinOnlyMethods` 的正则同样改前缀（漏掉这一处会让除 macOS 外的平台也被要求导出 `getGCControllerCount`）；删掉 `getVersionPendingPlatforms` 与引用它的过滤条件；在 `doLast` 开头加：
 
 ```groovy
 def allMethods = declaredNativeMethods()

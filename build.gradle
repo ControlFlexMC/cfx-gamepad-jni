@@ -134,7 +134,7 @@ tasks.named('test') {
 // ─────────────────────────────────────────────
 // Native library / Java API consistency check
 // ─────────────────────────────────────────────
-// Every native method declared in GamepadJNI.java must have an exported entry
+// Every native method declared in JniGamepad.java must have an exported entry
 // point in each packaged JNI binary. A stale binary (built before a new native
 // method was added) makes that method throw UnsatisfiedLinkError at runtime —
 // exactly what shipped in 0.10.2, where the Windows DLL predated
@@ -165,7 +165,7 @@ def declaredNativeMethods = {
 // Methods implemented only for macOS (src/main/c/gamepad_jni_macos.m, APPLE only)
 def darwinOnlyMethods = {
     collectNativeMethods(file('src/main/c/gamepad_jni_macos.m'),
-            /Java_com_ifels_gamepadjni_GamepadJNI_(\w+)\s*\(/)
+            /Java_com_ifels_gamepadjni_JniGamepad_(\w+)\s*\(/)
 }
 
 // Every packaged platform is built from the current C source, so drift fails the
@@ -173,10 +173,10 @@ def darwinOnlyMethods = {
 // were removed once those binaries were rebuilt.
 tasks.register('verifyNativeSymbols') {
     group = 'verification'
-    description = 'Fails when a packaged native library lacks an entry point declared in GamepadJNI.java'
+    description = 'Fails when a packaged native library lacks an entry point declared in JniGamepad.java'
 
     inputs.dir('prebuilt/jni')
-    inputs.file('src/main/java/com/ifels/gamepadjni/GamepadJNI.java')
+    inputs.file('src/main/java/com/ifels/gamepadjni/JniGamepad.java')
     inputs.file('src/main/c/gamepad_jni_macos.m')
 
     doLast {
@@ -185,6 +185,10 @@ tasks.register('verifyNativeSymbols') {
             throw new GradleException('verifyNativeSymbols: parsed 0 native methods from JniGamepad.java — the scanner is broken')
         }
         def darwinOnly = darwinOnlyMethods()
+        if (darwinOnly.isEmpty()) {
+            throw new GradleException('verifyNativeSymbols: parsed 0 macOS-only methods from gamepad_jni_macos.m — ' +
+                    'every platform would then be required to export getGCControllerCount')
+        }
         def failures = []
         int platforms = 0
 

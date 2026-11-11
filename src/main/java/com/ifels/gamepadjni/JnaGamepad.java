@@ -110,4 +110,9 @@ final class JnaGamepad {
     public static native float SDL_GetGamepadSensorDataRate(Pointer gamepad, int type);
     public static native byte SDL_GetGamepadSensorData(Pointer gamepad, int type, float[] data, int numValues);
     public static native void SDL_free(Pointer p);
+
+    /** Used by SDL_UpdateGamepads on Linux to decide whether to pump the event loop. */
+    public static native byte SDL_IsMainThread();
+
+    public static native void SDL_PumpEvents();
 }

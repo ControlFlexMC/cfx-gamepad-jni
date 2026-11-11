@@ -551,16 +551,23 @@ organize_output_windows() {
     # A stable value per release is also what lets SAC/Defender reputation
     # accumulate against a single file hash; see patch-pe-timestamp.py.
     local patcher="${GAMEPAD_JNI_ROOT}/prebuilt/patch-pe-timestamp.py"
-    local py
-    for py in python3 python; do
-        command -v "$py" >/dev/null && break
-        py=""
+    local -a patch_py=()
+    local candidate
+    for candidate in python3 python; do
+        if command -v "$candidate" >/dev/null 2>&1; then
+            patch_py=("$candidate")
+            break
+        fi
     done
-    if [ -z "$py" ]; then
-        echo "Error: python3/python not found; needed to stamp PE timestamps"
+    if [ ${#patch_py[@]} -eq 0 ] && command -v py >/dev/null 2>&1; then
+        # Windows launcher: MSYS2's minimal PATH exposes neither python3 nor python.
+        patch_py=(py -3)
+    fi
+    if [ ${#patch_py[@]} -eq 0 ]; then
+        echo "Error: python3/python/py not found; needed to stamp PE timestamps"
         exit 1
     fi
-    "$py" "$patcher" "${INSTALL_DIR}"/windows-*/gamepadjni.dll || exit 1
+    "${patch_py[@]}" "$patcher" "${INSTALL_DIR}"/windows-*/gamepadjni.dll || exit 1
 
     echo ""
     echo "Artifacts organized"
@@ -629,13 +636,22 @@ verify_output() {
             # linker. Assert it landed and that both architectures agree: zero is
             # what ld produces, a 2048 date is what lld produces, and either means
             # the patch step was skipped.
-            local py
-            for py in python3 python; do
-                command -v "$py" >/dev/null && break
-                py=""
+            local -a check_py=()
+            local candidate
+            for candidate in python3 python; do
+                if command -v "$candidate" >/dev/null 2>&1; then
+                    check_py=("$candidate")
+                    break
+                fi
             done
-            if [ -n "$py" ]; then
-                "$py" - "${INSTALL_DIR}" <<'PYEOF' || exit 1
+            if [ ${#check_py[@]} -eq 0 ] && command -v py >/dev/null 2>&1; then
+                check_py=(py -3)
+            fi
+            if [ ${#check_py[@]} -eq 0 ]; then
+                echo "Error: python3/python/py not found; needed to verify PE timestamps"
+                exit 1
+            fi
+            "${check_py[@]}" - "${INSTALL_DIR}" <<'PYEOF' || exit 1
 import glob, os, struct, sys, time
 
 install = sys.argv[1]
@@ -660,7 +676,6 @@ for path, stamp in sorted(values.items()):
 if len(set(values.values())) > 1:
     sys.exit('verify: Windows DLLs carry different PE timestamps')
 PYEOF
-            fi
             ;;
     esac
 }

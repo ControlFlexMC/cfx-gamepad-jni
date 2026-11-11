@@ -204,26 +204,44 @@ final class JnaBinding implements GamepadBinding {
     }
     @Override
     public void SDL_CloseGamepad(long gamepad) {
+        if (gamepad == 0) {
+            return;
+        }
         JnaGamepad.SDL_CloseGamepad(handle(gamepad));
     }
     @Override
     public int SDL_GetGamepadID(long gamepad) {
+        if (gamepad == 0) {
+            return 0;
+        }
         return JnaGamepad.SDL_GetGamepadID(handle(gamepad));
     }
     @Override
     public String SDL_GetGamepadName(long gamepad) {
+        if (gamepad == 0) {
+            return null;
+        }
         return utf8(JnaGamepad.SDL_GetGamepadName(handle(gamepad)));
     }
     @Override
     public String SDL_GetGamepadPath(long gamepad) {
+        if (gamepad == 0) {
+            return null;
+        }
         return utf8(JnaGamepad.SDL_GetGamepadPath(handle(gamepad)));
     }
     @Override
     public int SDL_GetGamepadType(long gamepad) {
+        if (gamepad == 0) {
+            return 0;
+        }
         return JnaGamepad.SDL_GetGamepadType(handle(gamepad));
     }
     @Override
     public int SDL_GetRealGamepadType(long gamepad) {
+        if (gamepad == 0) {
+            return 0;
+        }
         return JnaGamepad.SDL_GetRealGamepadType(handle(gamepad));
     }
     @Override
@@ -242,22 +260,37 @@ final class JnaBinding implements GamepadBinding {
     }
     @Override
     public short SDL_GetGamepadVendor(long gamepad) {
+        if (gamepad == 0) {
+            return 0;
+        }
         return JnaGamepad.SDL_GetGamepadVendor(handle(gamepad));
     }
     @Override
     public short SDL_GetGamepadProduct(long gamepad) {
+        if (gamepad == 0) {
+            return 0;
+        }
         return JnaGamepad.SDL_GetGamepadProduct(handle(gamepad));
     }
     @Override
     public short SDL_GetGamepadProductVersion(long gamepad) {
+        if (gamepad == 0) {
+            return 0;
+        }
         return JnaGamepad.SDL_GetGamepadProductVersion(handle(gamepad));
     }
     @Override
     public short SDL_GetGamepadFirmwareVersion(long gamepad) {
+        if (gamepad == 0) {
+            return 0;
+        }
         return JnaGamepad.SDL_GetGamepadFirmwareVersion(handle(gamepad));
     }
     @Override
     public String SDL_GetGamepadSerial(long gamepad) {
+        if (gamepad == 0) {
+            return null;
+        }
         return utf8(JnaGamepad.SDL_GetGamepadSerial(handle(gamepad)));
     }
     @Override
@@ -292,6 +325,14 @@ final class JnaBinding implements GamepadBinding {
     }
     @Override
     public void SDL_UpdateGamepads() {
+        // The JNI wrapper pumps the SDL event loop on the main thread so libudev
+        // hotplug is dispatched; SDL_UpdateGamepads alone never sees a device
+        // attached while the process runs. Same branch here, so a Linux host that
+        // fell back to JNA behaves identically.
+        if (LINUX && !AndroidPlatform.isAndroid() && JnaGamepad.SDL_IsMainThread() != 0) {
+            JnaGamepad.SDL_PumpEvents();
+            return;
+        }
         JnaGamepad.SDL_UpdateGamepads();
     }
     @Override
@@ -311,6 +352,9 @@ final class JnaBinding implements GamepadBinding {
     }
     @Override
     public short SDL_GetGamepadAxis(long gamepad, int axis) {
+        if (gamepad == 0) {
+            return 0;
+        }
         return JnaGamepad.SDL_GetGamepadAxis(handle(gamepad), axis);
     }
     @Override
@@ -322,6 +366,9 @@ final class JnaBinding implements GamepadBinding {
     }
     @Override
     public boolean SDL_GetGamepadButton(long gamepad, int button) {
+        if (gamepad == 0) {
+            return false;
+        }
         return JnaGamepad.SDL_GetGamepadButton(handle(gamepad), button) != 0;
     }
     @Override
@@ -330,6 +377,9 @@ final class JnaBinding implements GamepadBinding {
     }
     @Override
     public int SDL_GetGamepadButtonLabel(long gamepad, int button) {
+        if (gamepad == 0) {
+            return 0;
+        }
         return JnaGamepad.SDL_GetGamepadButtonLabel(handle(gamepad), button);
     }
     @Override
@@ -382,10 +432,16 @@ final class JnaBinding implements GamepadBinding {
     }
     @Override
     public int SDL_GetNumGamepadTouchpads(long gamepad) {
+        if (gamepad == 0) {
+            return 0;
+        }
         return JnaGamepad.SDL_GetNumGamepadTouchpads(handle(gamepad));
     }
     @Override
     public int SDL_GetNumGamepadTouchpadFingers(long gamepad, int touchpad) {
+        if (gamepad == 0) {
+            return 0;
+        }
         return JnaGamepad.SDL_GetNumGamepadTouchpadFingers(handle(gamepad), touchpad);
     }
     @Override
@@ -450,16 +506,29 @@ final class JnaBinding implements GamepadBinding {
     }
     @Override
     public int showCursor(boolean hide) {
-        return JnaUser32.isInstalled() ? JnaUser32.ShowCursor(hide) : 0;
+        if (JnaUser32.isInstalled()) {
+            return JnaUser32.ShowCursor(hide);
+        }
+        if (JnaUser32.isWindows()) {
+            // Binding user32 failed: report it the way a missing entry point always
+            // did, so SystemCursor.setHidden degrades to null instead of claiming
+            // the counter moved.
+            throw new UnsatisfiedLinkError(
+                    "[gamepad-jni] system cursor unavailable: user32!ShowCursor is not bound");
+        }
+        return 0;
     }
 
     private static final String ZERO_GUID = "00000000000000000000000000000000";
+
+    private static final boolean LINUX =
+            System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).contains("linux");
 
     private static Pointer handle(long value) {
         return value == 0 ? null : new Pointer(value);
     }
 
-    private static Memory cstr(String value) {
+    static Memory cstr(String value) {
         if (value == null) {
             return null;
         }
@@ -470,7 +539,7 @@ final class JnaBinding implements GamepadBinding {
         return memory;
     }
 
-    private static String utf8(Pointer text) {
+    static String utf8(Pointer text) {
         if (text == null) {
             return null;
         }

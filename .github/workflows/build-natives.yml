@@ -173,7 +173,16 @@ jobs:
           install: >-
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-python
             make
+
+      # The MSYS2 shell runs with a minimal PATH and does not see the runner's
+      # git, so resolve the timestamp out here. patch-pe-timestamp.py stamps both
+      # DLLs with it instead of falling back to `git log`; without it the build
+      # fails rather than silently stamping each build with a different value.
+      - name: Pin the PE timestamp value
+        shell: bash
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
 
       - name: Build JNI library (x86_64 + aarch64)
         shell: msys2 {0}

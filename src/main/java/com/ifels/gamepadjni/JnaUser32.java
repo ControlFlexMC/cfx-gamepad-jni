@@ -48,9 +48,9 @@ final class JnaUser32 {
         return installed;
     }
 
-    static native int ShowCursor(boolean show);
-
-    private static boolean isWindows() {
+    static boolean isWindows() {
         return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows");
     }
+
+    static native int ShowCursor(boolean show);
 }
