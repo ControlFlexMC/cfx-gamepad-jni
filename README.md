@@ -95,6 +95,37 @@ against **3.4.0**, the oldest of those, and only calls
 | 1.21.1 | 5.14.0 |
 | 1.21.11 / 26.x | 5.17.0 |
 
+### 1.7.10: pointing at a JNA you installed yourself
+
+Minecraft 1.7.10 ships no JNA, so the fallback has nothing to bind to and the
+error message says so. `-Djna.library.path` does **not** help — that property tells
+JNA where to find *native* libraries, and it is only read after JNA's own classes
+are already on the classpath.
+
+What does help, on the Java 8 runtime 1.7.10 uses, is putting the jar where the
+game class loader can see it:
+
+```bash
+-Xbootclasspath/a:/absolute/path/to/jna-5.12.1.jar
+```
+
+Prism, HMCL and the vanilla launcher all accept that in their JVM arguments field.
+The library needs no configuration change for this: `BindingPolicy` probes with
+`Class.forName("com.sun.jna.Native", false, GamepadJNI.class.getClassLoader())`, and
+the game class loader delegates to the boot class path, so the fallback engages on
+its own. Verified end to end on Temurin 8 with JNA 5.12.1: SDL3 loaded, JNA
+registered, `initialize` returned true.
+
+Three things to keep in mind:
+
+- `-Xbootclasspath/a` exists only up to Java 8. A 1.7.10 instance running on 9+
+  needs the jar on the launcher's class path instead (or a shaded copy), because
+  the option is rejected outright.
+- JNA 5.x is Java 8 bytecode, so any current release works; `jna-platform` is not
+  needed, this library only uses the core jar.
+- If JNA cannot extract `jnidispatch` from its own jar, point it at the unpacked
+  copy with `-Djna.boot.library.path=<dir containing jnidispatch.dll>`.
+
 ### What a failure looks like
 
 When neither backend loads, the error names both, so a locked-down Windows install
